@@ -1,0 +1,44 @@
+[Unit]
+Description=MEXC futures trading bot
+Documentation=https://github.com/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mexcbot
+Group=mexcbot
+WorkingDirectory=/opt/mexc-bot
+
+# APIキーと接続トークンはここから読む。必ず権限 600 にすること。
+# systemd の Environment= に直書きすると systemctl show や /proc から他ユーザーに見える。
+EnvironmentFile=/etc/mexc-bot/env
+
+ExecStart=/opt/mexc-bot/mexc-bot-server --port 8080 --host 127.0.0.1 --data-dir /var/lib/mexc-bot
+
+Restart=always
+RestartSec=10s
+
+# 落ち続けるときに無限再起動しないようにする。
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# メモリ上限。Always Free の小さいインスタンスでの OOM 対策。
+MemoryMax=1G
+
+# 最低限のサンドボックス。
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mexc-bot
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=append:/var/log/mexc-bot/server.log
+StandardError=append:/var/log/mexc-bot/server.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,23 @@
+# Dart / Flutter
+.dart_tool/
+.packages
+build/
+pubspec.lock
+*.log
+flutter_*.log
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# 取引所のAPIキーや接続トークンが入るもの。絶対に共有しないこと。
+.env
+env
+data/
+**/data/config.json
+**/data/positions.json
+
+# OS
+.DS_Store
+Thumbs.db

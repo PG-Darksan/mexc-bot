@@ -1,0 +1,28 @@
+# DuckDNS などの無料サブドメインで Let's Encrypt の証明書を取り、
+# WebSocket を TLS で包む設定。
+#
+#   1. https://www.duckdns.org/ で名前を取り、サーバーのIPを登録する
+#   2. 下の your-name.duckdns.org を自分の名前に書き換える
+#   3. sudo systemctl restart caddy
+#
+# 証明書の取得と更新は Caddy が勝手にやってくれる。
+
+your-name.duckdns.org {
+	# 証明書の通知先。届かなくても動くが入れておくとよい。
+	tls you@example.com
+
+	# ボット本体へ中継する。WebSocket のアップグレードもそのまま通る。
+	reverse_proxy 127.0.0.1:8080
+
+	# 接続元を絞りたいときは、このブロックを有効にして自宅や
+	# 携帯回線のIPだけ通す (トークン認証との二重の守り)。
+	# @blocked not remote_ip 203.0.113.0/24
+	# respond @blocked 403
+
+	log {
+		output file /var/log/caddy/mexc-bot.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+	}
+}
