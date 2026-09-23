@@ -42,6 +42,10 @@ class _HomePageState extends State<HomePage> {
     // 横に並べると「開始」ボタンに重なる幅では、状態チップを2段目へ落とす。
     final compactHeader = width < 620;
 
+    // IndexedStack にして、タブを移ってもそれぞれの画面の状態を保つ。
+    // 設定タブで触りかけの内容が、行き来で消えないようにするため。
+    final body = IndexedStack(index: _index, children: pages);
+
     return Scaffold(
       appBar: _TopBar(compact: compactHeader),
       body: Column(
@@ -66,10 +70,10 @@ class _HomePageState extends State<HomePage> {
                         ],
                       ),
                       const VerticalDivider(width: 1),
-                      Expanded(child: pages[_index]),
+                      Expanded(child: body),
                     ],
                   )
-                : pages[_index],
+                : body,
           ),
         ],
       ),

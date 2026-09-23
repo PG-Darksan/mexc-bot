@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mexc_core/mexc_core.dart';
@@ -10,7 +12,8 @@ import 'home_page.dart' show RunModeLabel;
 
 /// 売買条件と接続設定をまとめて編集する画面。
 ///
-/// 既定値は利用者が指定した条件そのもの。ここで自由に変えられる。
+/// 項目が多いので、よく触るものだけ開いた状態で畳んである。
+/// ショートとロングは同じ並びで左右に置き、値を見比べられるようにする。
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
 
@@ -71,6 +74,25 @@ class _SettingsPageState extends State<SettingsPage> {
   void _updateApp(AppSettings Function(AppSettings) change) =>
       setState(() => _appDraft = change(appDraft));
 
+  /// 動かし方まわりは、切り替えたその場で覚える。
+  ///
+  /// タブを移ると画面が作り直されるので、保存しないと元に戻ってしまう。
+  Future<void> _persistAppSettings(AppSettings next) async {
+    if (!mounted) return;
+    await AppScope.of(context).updateAppSettings(
+      next.copyWith(
+        serverUrl: _serverUrlController.text.trim(),
+        serverToken: _serverTokenController.text.trim(),
+      ),
+    );
+  }
+
+  void _changeAppSettings(AppSettings Function(AppSettings) change) {
+    final next = change(appDraft);
+    setState(() => _appDraft = next);
+    unawaited(_persistAppSettings(next));
+  }
+
   Future<void> _save() async {
     final state = AppScope.of(context);
     final config = draft.copyWith(
@@ -123,111 +145,66 @@ class _SettingsPageState extends State<SettingsPage> {
       return const Center(child: CircularProgressIndicator());
     }
     final state = AppScope.of(context);
+    final limitOrder = draft.orderType == EntryOrderType.limit;
 
     return Column(
       children: [
         Expanded(
           child: ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
             children: [
+              // ── いちばん触るところ。開いたままにする ──
               _Section(
-                title: '動かし方',
-                description:
-                    'ローカル実行はこの端末だけで完結します。アプリを閉じると止まるので、'
-                    '24時間動かすならサーバー接続を使ってください。',
+                title: 'ショートとロング',
+                description: '同じ項目を左右に並べてあります。'
+                    'RSI のしきい値だけ向きが逆 (既定 97 / 3) です。',
+                initiallyExpanded: true,
                 children: [
-                  for (final mode in RunMode.values)
-                    RadioListTile<RunMode>(
-                      value: mode,
-                      groupValue: appDraft.mode,
-                      onChanged: (v) =>
-                          _updateApp((s) => s.copyWith(mode: v)),
-                      title: Text(mode.label),
-                      dense: true,
-                    ),
-                  if (appDraft.mode == RunMode.remote) ...[
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _serverUrlController,
-                      decoration: const InputDecoration(
-                        labelText: 'サーバーのURL',
-                        hintText: 'wss://example.duckdns.org:8443/ws',
-                        helperText: 'TLS を使うなら wss://、同じ端末で試すなら ws://127.0.0.1:8080/ws',
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: _SideCard(
+                          side: draft.short,
+                          showLimitOffset: limitOrder,
+                          showFunding: draft.fundingFilterEnabled,
+                          onChanged: (side) => _update((c) => c.withSide(side)),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _serverTokenController,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: '接続トークン',
-                        helperText: 'サーバーの BOT_TOKEN と同じ値',
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _SideCard(
+                          side: draft.long,
+                          showLimitOffset: limitOrder,
+                          showFunding: draft.fundingFilterEnabled,
+                          onChanged: (side) => _update((c) => c.withSide(side)),
+                        ),
                       ),
-                    ),
-                    SwitchListTile(
-                      value: appDraft.allowSelfSignedCertificate,
-                      onChanged: (v) => _updateApp(
-                        (s) => s.copyWith(allowSelfSignedCertificate: v),
-                      ),
-                      title: const Text('自己署名証明書を許可する'),
-                      subtitle: const Text(
-                        '通信の検証を外すので、試験用以外では切っておいてください。',
-                      ),
-                      dense: true,
-                    ),
-                  ],
-                  if (TrayService.isSupported)
-                    SwitchListTile(
-                      value: appDraft.keepRunningInTray,
-                      onChanged: (v) =>
-                          _updateApp((s) => s.copyWith(keepRunningInTray: v)),
-                      title: const Text('ウィンドウを閉じてもタスクトレイに残す'),
-                      subtitle: const Text(
-                        'ローカル実行でボットを止めたくないときに入れておきます。',
-                      ),
-                      dense: true,
-                    ),
-                  SwitchListTile(
-                    value: appDraft.autoStartBot,
-                    onChanged: (v) =>
-                        _updateApp((s) => s.copyWith(autoStartBot: v)),
-                    title: const Text('アプリ起動と同時にボットを動かす'),
-                    dense: true,
-                  ),
-                ],
-              ),
-
-              _Section(
-                title: '取引所のAPIキー',
-                description: appDraft.mode == RunMode.remote
-                    ? 'サーバー接続モードでは、APIキーはサーバー側の環境変数で設定します。'
-                          'ここでの入力はローカル実行のときだけ使われます。'
-                    : 'IPホワイトリストを設定しないキーは90日で失効します。'
-                          '先物の発注権限とKYCが必要です。',
-                children: [
-                  TextField(
-                    controller: _apiKeyController,
-                    decoration: const InputDecoration(labelText: 'API Key'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _apiSecretController,
-                    obscureText: true,
-                    decoration: const InputDecoration(labelText: 'API Secret'),
+                    ],
                   ),
                   const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton.icon(
-                      onPressed: () async {
-                        await state.clearCredentials();
-                        _apiKeyController.clear();
-                        _apiSecretController.clear();
-                      },
-                      icon: const Icon(Icons.delete_outline, size: 16),
-                      label: const Text('保存したキーを消す'),
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => _update(
+                            (c) => c.copyWith(long: c.short.mirrored()),
+                          ),
+                          child: const Text('← の値を右へ', style: TextStyle(fontSize: 12)),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => _update(
+                            (c) => c.copyWith(short: c.long.mirrored()),
+                          ),
+                          child: const Text('右の値を ← へ', style: TextStyle(fontSize: 12)),
+                        ),
+                      ),
+                    ],
                   ),
+                  const _Hint('そろえると、RSI のしきい値だけ 100 から引いた値に入れ替わります。'),
                 ],
               ),
 
@@ -235,31 +212,27 @@ class _SettingsPageState extends State<SettingsPage> {
                 title: '監視する銘柄',
                 children: [
                   _NumberField(
-                    label: '24時間売買代金の下限',
-                    suffix: 'USDT',
-                    value: draft.minAmount24Usdt,
-                    helper: '既定 5,000,000。これを下回る銘柄は判定しません。',
-                    onChanged: (v) =>
-                        _update((c) => c.copyWith(minAmount24Usdt: v)),
+                    label: '24h出来高の下限',
+                    suffix: 'M USDT',
+                    value: draft.minAmount24Usdt / 1000000,
+                    onChanged: (v) => _update(
+                      (c) => c.copyWith(minAmount24Usdt: v * 1000000),
+                    ),
                   ),
-                  _NumberField(
-                    label: '監視する上限銘柄数',
-                    value: draft.maxWatchSymbols.toDouble(),
-                    integer: true,
-                    helper: '売買代金の多い順に選びます。',
-                    onChanged: (v) =>
-                        _update((c) => c.copyWith(maxWatchSymbols: v.toInt())),
+                  const _Hint(
+                    '1 M = 100万 USDT。既定 5 M。'
+                    'この下限を満たす銘柄はすべて見ます (銘柄数の上限はありません)。',
                   ),
                   const SizedBox(height: 8),
                   SegmentedButton<SymbolSelectionMode>(
                     segments: const [
                       ButtonSegment(
                         value: SymbolSelectionMode.auto,
-                        label: Text('出来高で自動選定'),
+                        label: Text('出来高で自動', style: TextStyle(fontSize: 12)),
                       ),
                       ButtonSegment(
                         value: SymbolSelectionMode.manual,
-                        label: Text('自分で指定'),
+                        label: Text('自分で指定', style: TextStyle(fontSize: 12)),
                       ),
                     ],
                     selected: {draft.symbolMode},
@@ -267,22 +240,24 @@ class _SettingsPageState extends State<SettingsPage> {
                         _update((c) => c.copyWith(symbolMode: s.first)),
                   ),
                   if (draft.symbolMode == SymbolSelectionMode.manual) ...[
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 8),
                     TextField(
                       controller: _manualSymbolsController,
                       decoration: const InputDecoration(
                         labelText: '監視する銘柄',
                         hintText: 'BTC_USDT, ETH_USDT',
+                        isDense: true,
                       ),
                       maxLines: 2,
                     ),
                   ],
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   TextField(
                     controller: _excludedSymbolsController,
                     decoration: const InputDecoration(
                       labelText: '常に除外する銘柄',
                       hintText: 'AKE_USDT, ONE_USDT',
+                      isDense: true,
                     ),
                     maxLines: 2,
                   ),
@@ -291,16 +266,18 @@ class _SettingsPageState extends State<SettingsPage> {
 
               _Section(
                 title: '判定に使う時間軸',
-                description: '選んだ時間軸それぞれで独立に判定します。'
-                    '進行中の足も含めて、下の判定間隔ごとに毎回計算し直します。',
+                description: '選んだ時間軸それぞれで独立に判定します。',
                 children: [
                   Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                    spacing: 6,
+                    runSpacing: 6,
                     children: [
                       for (final tf in Timeframe.values)
                         FilterChip(
-                          label: Text(tf.label),
+                          label: Text(tf.label, style: const TextStyle(fontSize: 12)),
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
                           selected: draft.timeframes.contains(tf),
                           onSelected: (selected) => _update((c) {
                             final list = [...c.timeframes];
@@ -321,193 +298,139 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
 
               _Section(
-                title: '指標',
-                description: '期間はショートとロングで共通です。'
-                    'しきい値とσ倍率は方向ごとに下で決めます。',
+                title: '指標の期間',
+                description: 'ショートとロングで共通です。',
                 children: [
-                  _NumberField(
-                    label: 'ボリンジャーバンドの期間',
-                    value: draft.bbPeriod.toDouble(),
-                    integer: true,
-                    onChanged: (v) =>
-                        _update((c) => c.copyWith(bbPeriod: v.toInt())),
-                  ),
-                  _NumberField(
-                    label: 'RSIの期間',
-                    value: draft.rsiPeriod.toDouble(),
-                    integer: true,
-                    helper: 'Wilder平滑 (TradingView と同じ計算) です。',
-                    onChanged: (v) =>
-                        _update((c) => c.copyWith(rsiPeriod: v.toInt())),
-                  ),
-                  _NumberField(
-                    label: 'EMAの期間',
-                    value: draft.emaPeriod.toDouble(),
-                    integer: true,
-                    helper: '利確目標の基準にする移動平均です。',
-                    onChanged: (v) =>
-                        _update((c) => c.copyWith(emaPeriod: v.toInt())),
-                  ),
-                  _NumberField(
-                    label: '保持する足の本数',
-                    value: draft.historyBars.toDouble(),
-                    integer: true,
-                    helper: '多いほど指標が安定します (既定 300)。',
-                    onChanged: (v) =>
-                        _update((c) => c.copyWith(historyBars: v.toInt())),
-                  ),
-                ],
-              ),
-
-              _Section(
-                title: 'ショートとロング',
-                description: '同じ項目を左右に並べてあります。既定値はそろえてあり、'
-                    'RSI のしきい値だけ向きが逆 (ショート 97 以上 / ロング 3 以下) です。',
-                children: [
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final limit = draft.orderType == EntryOrderType.limit;
-                      final short = _SideCard(
-                        side: draft.short,
-                        showLimitOffset: limit,
-                        showFunding: draft.fundingFilterEnabled,
-                        onChanged: (side) => _update((c) => c.withSide(side)),
-                      );
-                      final long = _SideCard(
-                        side: draft.long,
-                        showLimitOffset: limit,
-                        showFunding: draft.fundingFilterEnabled,
-                        onChanged: (side) => _update((c) => c.withSide(side)),
-                      );
-                      // 画面が狭いときだけ縦に積む。広ければ左右に並べる。
-                      if (constraints.maxWidth < 720) {
-                        return Column(
-                          children: [short, const SizedBox(height: 16), long],
-                        );
-                      }
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(child: short),
-                          const SizedBox(width: 16),
-                          Expanded(child: long),
-                        ],
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                  Row(
                     children: [
-                      OutlinedButton.icon(
-                        onPressed: () => _update(
-                          (c) => c.copyWith(long: c.short.mirrored()),
+                      Expanded(
+                        child: _NumberField(
+                          label: 'BB期間',
+                          value: draft.bbPeriod.toDouble(),
+                          integer: true,
+                          dense: true,
+                          onChanged: (v) =>
+                              _update((c) => c.copyWith(bbPeriod: v.toInt())),
                         ),
-                        icon: const Icon(Icons.east, size: 16),
-                        label: const Text('ショートの値をロングへ'),
                       ),
-                      OutlinedButton.icon(
-                        onPressed: () => _update(
-                          (c) => c.copyWith(short: c.long.mirrored()),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _NumberField(
+                          label: 'RSI期間',
+                          value: draft.rsiPeriod.toDouble(),
+                          integer: true,
+                          dense: true,
+                          onChanged: (v) =>
+                              _update((c) => c.copyWith(rsiPeriod: v.toInt())),
                         ),
-                        icon: const Icon(Icons.west, size: 16),
-                        label: const Text('ロングの値をショートへ'),
                       ),
                     ],
                   ),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      'そろえると、RSI のしきい値だけ 100 から引いた値に入れ替わります。',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _NumberField(
+                          label: 'EMA期間',
+                          value: draft.emaPeriod.toDouble(),
+                          integer: true,
+                          dense: true,
+                          onChanged: (v) =>
+                              _update((c) => c.copyWith(emaPeriod: v.toInt())),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _NumberField(
+                          label: '保持する足',
+                          suffix: '本',
+                          value: draft.historyBars.toDouble(),
+                          integer: true,
+                          dense: true,
+                          onChanged: (v) => _update(
+                            (c) => c.copyWith(historyBars: v.toInt()),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
+                  const _Hint('RSI は Wilder 平滑 (TradingView と同じ計算) です。'),
                 ],
               ),
 
               _Section(
-                title: 'エントリー',
+                title: 'エントリーの出し方',
                 description: 'レバレッジ・証拠金・指値の幅は方向ごとの設定にあります。',
                 children: [
-                  const SizedBox(height: 8),
                   SegmentedButton<EntryOrderType>(
                     segments: const [
                       ButtonSegment(
                         value: EntryOrderType.market,
-                        label: Text('成行'),
+                        label: Text('成行', style: TextStyle(fontSize: 12)),
                       ),
                       ButtonSegment(
                         value: EntryOrderType.limit,
-                        label: Text('指値'),
+                        label: Text('指値', style: TextStyle(fontSize: 12)),
                       ),
                     ],
                     selected: {draft.orderType},
                     onSelectionChanged: (s) =>
                         _update((c) => c.copyWith(orderType: s.first)),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 12),
                   SegmentedButton<PositionMode>(
                     segments: const [
                       ButtonSegment(
                         value: PositionMode.hedge,
-                        label: Text('ヘッジモード'),
+                        label: Text('ヘッジ', style: TextStyle(fontSize: 12)),
                       ),
                       ButtonSegment(
                         value: PositionMode.oneWay,
-                        label: Text('一方向モード'),
+                        label: Text('一方向', style: TextStyle(fontSize: 12)),
                       ),
                     ],
                     selected: {draft.positionMode},
                     onSelectionChanged: (s) =>
                         _update((c) => c.copyWith(positionMode: s.first)),
                   ),
-                  SwitchListTile(
+                  const _Hint(
+                    'ヘッジ … 同じ銘柄で買いと売りを同時に持てます (MEXC の既定)。\n'
+                    '一方向 … 1銘柄につきどちらか片方だけ。反対の注文は決済になります。\n'
+                    'MEXC 側の設定と必ず合わせてください。食い違うと注文が通りません。',
+                  ),
+                  _CompactSwitch(
+                    label: '分離マージンを使う',
+                    subtitle: '切るとクロスマージン。損切りを置かない運用では分離を推奨。',
                     value: draft.useIsolatedMargin,
                     onChanged: (v) =>
                         _update((c) => c.copyWith(useIsolatedMargin: v)),
-                    title: const Text('分離マージンを使う'),
-                    subtitle: const Text(
-                      '切るとクロスマージンになります。損切りを置かない運用では分離を推奨します。',
-                    ),
-                    dense: true,
                   ),
                 ],
               ),
 
               _Section(
                 title: '利確の出し方',
-                description:
-                    '利確は「検知した瞬間の EMA」を固定し、そこからの乖離率に係数を掛けた位置に置きます。'
-                    '係数・利確幅の下限・損切りは、方向ごとの設定にあります。',
+                description: '係数と下限、損切りは方向ごとの設定にあります。',
                 children: [
-                  SwitchListTile(
+                  _CompactSwitch(
+                    label: '発注と同時に利確を取引所へ預ける',
+                    subtitle: 'アプリやサーバーが落ちていても取引所側で利確されます。',
                     value: draft.attachTakeProfitToOrder,
                     onChanged: (v) =>
                         _update((c) => c.copyWith(attachTakeProfitToOrder: v)),
-                    title: const Text('発注と同時に利確を取引所へ預ける'),
-                    subtitle: const Text(
-                      '入れておくと、アプリやサーバーが落ちていても取引所側で利確されます。',
-                    ),
-                    dense: true,
                   ),
                 ],
               ),
 
               _Section(
                 title: '資金調達率のフィルタ',
-                description:
-                    'その方向が「支払う側」になるときだけ効きます。'
-                    '受け取る側なら率が大きくても見送りません '
-                    '(率がマイナスならショートが支払い、プラスならロングが支払います)。'
-                    '負担率と間隔の基準は方向ごとの設定にあります。',
                 children: [
-                  SwitchListTile(
+                  _CompactSwitch(
+                    label: 'フィルタを使う',
+                    subtitle: 'その方向が支払う側のときだけ効きます。'
+                        '負担率と間隔の基準は方向ごとの設定に。',
                     value: draft.fundingFilterEnabled,
                     onChanged: (v) =>
                         _update((c) => c.copyWith(fundingFilterEnabled: v)),
-                    title: const Text('フィルタを使う'),
-                    dense: true,
                   ),
                 ],
               ),
@@ -515,40 +438,161 @@ class _SettingsPageState extends State<SettingsPage> {
               _Section(
                 title: '運用',
                 children: [
-                  _NumberField(
-                    label: '判定の間隔',
-                    suffix: '秒',
-                    value: draft.evaluationIntervalSeconds.toDouble(),
-                    integer: true,
-                    helper: '既定 60 秒。どの時間軸もこの間隔で評価します。',
-                    onChanged: (v) => _update(
-                      (c) => c.copyWith(evaluationIntervalSeconds: v.toInt()),
-                    ),
-                  ),
-                  _NumberField(
-                    label: '同時に持つポジションの上限',
-                    suffix: '件',
-                    value: draft.maxConcurrentPositions.toDouble(),
-                    integer: true,
-                    onChanged: (v) => _update(
-                      (c) => c.copyWith(maxConcurrentPositions: v.toInt()),
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _NumberField(
+                          label: '判定の間隔',
+                          suffix: '秒',
+                          value: draft.evaluationIntervalSeconds.toDouble(),
+                          integer: true,
+                          dense: true,
+                          onChanged: (v) => _update(
+                            (c) => c.copyWith(
+                              evaluationIntervalSeconds: v.toInt(),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _NumberField(
+                          label: '同時に持つ上限',
+                          suffix: '件',
+                          value: draft.maxConcurrentPositions.toDouble(),
+                          integer: true,
+                          dense: true,
+                          onChanged: (v) => _update(
+                            (c) => c.copyWith(maxConcurrentPositions: v.toInt()),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   _NumberField(
                     label: '同じ銘柄の再エントリー待ち',
                     suffix: '分',
                     value: draft.reentryCooldownMinutes.toDouble(),
                     integer: true,
+                    dense: true,
                     onChanged: (v) => _update(
                       (c) => c.copyWith(reentryCooldownMinutes: v.toInt()),
                     ),
                   ),
-                  SwitchListTile(
+                  _CompactSwitch(
+                    label: '同じ足では1回だけ発火させる',
                     value: draft.oneSignalPerBar,
                     onChanged: (v) =>
                         _update((c) => c.copyWith(oneSignalPerBar: v)),
-                    title: const Text('同じ足では1回だけ発火させる'),
-                    dense: true,
+                  ),
+                ],
+              ),
+
+              _Section(
+                title: '動かし方',
+                description: '${appDraft.mode == RunMode.local ? "ローカル実行" : "サーバー接続"} '
+                    '(切り替えるとすぐ保存されます)',
+                children: [
+                  for (final mode in RunMode.values)
+                    RadioListTile<RunMode>(
+                      value: mode,
+                      groupValue: appDraft.mode,
+                      onChanged: (v) {
+                        if (v == null) return;
+                        _changeAppSettings((s) => s.copyWith(mode: v));
+                      },
+                      title: Text(mode.label, style: const TextStyle(fontSize: 13)),
+                      contentPadding: EdgeInsets.zero,
+                      visualDensity: VisualDensity.compact,
+                      dense: true,
+                    ),
+                  if (appDraft.mode == RunMode.remote) ...[
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _serverUrlController,
+                      decoration: const InputDecoration(
+                        labelText: 'サーバーのURL',
+                        hintText: 'wss://example.duckdns.org/ws',
+                        isDense: true,
+                      ),
+                      onChanged: (_) => unawaited(_persistAppSettings(appDraft)),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _serverTokenController,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        labelText: '接続トークン',
+                        isDense: true,
+                      ),
+                      onChanged: (_) => unawaited(_persistAppSettings(appDraft)),
+                    ),
+                    const _Hint(
+                      '接続トークンは、サーバーを立てたときに deploy/setup.sh が作る '
+                      'BOT_TOKEN と同じ値です (サーバーの /etc/mexc-bot/env に入っています)。\n'
+                      'サーバーをまだ立てていないなら、ローカル実行のままにしてください。',
+                    ),
+                    _CompactSwitch(
+                      label: '自己署名証明書を許可する',
+                      subtitle: '通信の検証を外すので、試験用以外では切っておいてください。',
+                      value: appDraft.allowSelfSignedCertificate,
+                      onChanged: (v) => _changeAppSettings(
+                        (s) => s.copyWith(allowSelfSignedCertificate: v),
+                      ),
+                    ),
+                  ],
+                  if (TrayService.isSupported)
+                    _CompactSwitch(
+                      label: 'ウィンドウを閉じてもタスクトレイに残す',
+                      value: appDraft.keepRunningInTray,
+                      onChanged: (v) =>
+                          _changeAppSettings((s) => s.copyWith(keepRunningInTray: v)),
+                    ),
+                  _CompactSwitch(
+                    label: 'アプリ起動と同時にボットを動かす',
+                    subtitle: '入れておくと、開いた瞬間から本番の注文が出ます。',
+                    value: appDraft.autoStartBot,
+                    onChanged: (v) =>
+                        _changeAppSettings((s) => s.copyWith(autoStartBot: v)),
+                  ),
+                ],
+              ),
+
+              _Section(
+                title: '取引所のAPIキー',
+                description: state.credentials.isEmpty ? '未設定' : '設定済み',
+                children: [
+                  TextField(
+                    controller: _apiKeyController,
+                    decoration: const InputDecoration(
+                      labelText: 'API Key',
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _apiSecretController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'API Secret',
+                      isDense: true,
+                    ),
+                  ),
+                  const _Hint(
+                    'IPホワイトリストを設定しないキーは90日で失効します。'
+                    '先物の発注権限とKYCが必要です。',
+                  ),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: () async {
+                        await state.clearCredentials();
+                        _apiKeyController.clear();
+                        _apiSecretController.clear();
+                      },
+                      icon: const Icon(Icons.delete_outline, size: 16),
+                      label: const Text('保存したキーを消す'),
+                    ),
                   ),
                 ],
               ),
@@ -560,10 +604,10 @@ class _SettingsPageState extends State<SettingsPage> {
         Material(
           elevation: 8,
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
             child: Row(
               children: [
-                TextButton.icon(
+                TextButton(
                   onPressed: () {
                     setState(() {
                       _draft = const StrategyConfig();
@@ -571,14 +615,11 @@ class _SettingsPageState extends State<SettingsPage> {
                       _excludedSymbolsController.clear();
                     });
                   },
-                  icon: const Icon(Icons.restart_alt, size: 18),
-                  label: const Text('既定値に戻す'),
+                  child: const Text('既定値', style: TextStyle(fontSize: 12)),
                 ),
-                const SizedBox(width: 8),
-                TextButton.icon(
+                TextButton(
                   onPressed: _reload,
-                  icon: const Icon(Icons.undo, size: 18),
-                  label: const Text('変更を取り消す'),
+                  child: const Text('取り消す', style: TextStyle(fontSize: 12)),
                 ),
                 const Spacer(),
                 FilledButton.icon(
@@ -595,9 +636,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 }
 
-/// 片方向ぶんの設定をまとめたカード。
-///
-/// ショートとロングで項目の並びを同じにして、左右で見比べられるようにする。
+/// 片方向ぶんの設定。ショートとロングで並びを揃え、左右で見比べられるようにする。
 class _SideCard extends StatelessWidget {
   const _SideCard({
     required this.side,
@@ -618,7 +657,7 @@ class _SideCard extends StatelessWidget {
     final color = isShort ? Colors.redAccent : Colors.green;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
       decoration: BoxDecoration(
         border: Border.all(color: color.withValues(alpha: 0.5)),
         borderRadius: BorderRadius.circular(8),
@@ -630,132 +669,126 @@ class _SideCard extends StatelessWidget {
             children: [
               Icon(
                 isShort ? Icons.trending_down : Icons.trending_up,
-                size: 18,
+                size: 16,
                 color: color,
               ),
-              const SizedBox(width: 6),
-              Text(
-                side.direction.label,
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: color,
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  side.direction.label,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
                 ),
               ),
-              const Spacer(),
-              Switch(
-                value: side.enabled,
-                onChanged: (v) => onChanged(side.copyWith(enabled: v)),
+              SizedBox(
+                height: 24,
+                child: Switch(
+                  value: side.enabled,
+                  onChanged: (v) => onChanged(side.copyWith(enabled: v)),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
               ),
             ],
           ),
           Text(
-            isShort ? 'RSI が高く +σ を上抜けたら売る' : 'RSI が低く -σ を下抜けたら買う',
-            style: theme.textTheme.bodySmall,
+            isShort ? '+σ を上抜けたら売る' : '-σ を下抜けたら買う',
+            style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           _NumberField(
-            label: 'RSIのしきい値',
+            label: 'RSI',
+            suffix: isShort ? '以上' : '以下',
             value: side.rsiThreshold,
-            helper: isShort ? 'この値以上で候補になります。' : 'この値以下で候補になります。',
+            dense: true,
             onChanged: (v) => onChanged(side.copyWith(rsiThreshold: v)),
           ),
           _NumberField(
             label: 'σ倍率',
             value: side.bbSigma,
-            helper: isShort
-                ? '終値が +σ を超えたら候補になります。'
-                : '終値が -σ を割ったら候補になります。',
+            dense: true,
             onChanged: (v) => onChanged(side.copyWith(bbSigma: v)),
           ),
           _NumberField(
-            label: 'レバレッジ',
+            label: 'レバ',
             suffix: '倍',
             value: side.leverage.toDouble(),
             integer: true,
+            dense: true,
             onChanged: (v) => onChanged(side.copyWith(leverage: v.toInt())),
           ),
           _NumberField(
-            label: '1回あたりの証拠金',
+            label: '証拠金',
             suffix: 'USDT',
             value: side.marginPerTradeUsdt,
+            dense: true,
             onChanged: (v) => onChanged(side.copyWith(marginPerTradeUsdt: v)),
           ),
           if (showLimitOffset)
             _NumberField(
-              label: '指値を現在値から離す幅',
+              label: '指値幅',
               suffix: '%',
               value: side.limitOffsetPercent,
-              helper: isShort ? '現在値より高い側に置きます。' : '現在値より安い側に置きます。',
+              dense: true,
               onChanged: (v) => onChanged(side.copyWith(limitOffsetPercent: v)),
             ),
           _NumberField(
-            label: '利確の係数',
+            label: '利確係数',
             value: side.takeProfitFactor,
-            helper: '0.5 = 乖離の半分。0 より大きく 1 未満。',
+            dense: true,
             onChanged: (v) => onChanged(side.copyWith(takeProfitFactor: v)),
           ),
           _NumberField(
-            label: '利確幅の下限',
+            label: '利確下限',
             suffix: '%',
             value: side.minTakeProfitPercent,
-            helper: 'API経由の往復手数料は 0.16% 前後です。',
+            dense: true,
             onChanged: (v) => onChanged(side.copyWith(minTakeProfitPercent: v)),
           ),
-          SwitchListTile(
+          _MiniSwitch(
+            label: '行きすぎ逆張り',
             value: side.bandBreakoutEntryEnabled,
             onChanged: (v) =>
                 onChanged(side.copyWith(bandBreakoutEntryEnabled: v)),
-            title: const Text('行きすぎたら RSI を見ない'),
-            subtitle: Text(
-              isShort
-                  ? '+σ から大きく離れたら、RSI に関わらず売る'
-                  : '-σ から大きく離れたら、RSI に関わらず買う',
-              style: const TextStyle(fontSize: 11),
-            ),
-            contentPadding: EdgeInsets.zero,
-            dense: true,
           ),
           if (side.bandBreakoutEntryEnabled)
             _NumberField(
-              label: 'σから離れた幅',
+              label: '逆張り幅',
               suffix: '%',
               value: side.bandBreakoutPercent,
-              helper: '既定 20%。利確はこの乖離の「利確の係数」倍まで戻した位置に置きます。',
+              dense: true,
               onChanged: (v) =>
                   onChanged(side.copyWith(bandBreakoutPercent: v)),
             ),
-          SwitchListTile(
+          _MiniSwitch(
+            label: '損切り',
             value: side.stopLossEnabled,
             onChanged: (v) => onChanged(side.copyWith(stopLossEnabled: v)),
-            title: const Text('損切りを使う'),
-            contentPadding: EdgeInsets.zero,
-            dense: true,
           ),
           if (side.stopLossEnabled)
             _NumberField(
               label: '損切り幅',
               suffix: '%',
               value: side.stopLossPercent,
-              helper: isShort
-                  ? '建値からこの%だけ上がったら決済します。'
-                  : '建値からこの%だけ下がったら決済します。',
+              dense: true,
               onChanged: (v) => onChanged(side.copyWith(stopLossPercent: v)),
             ),
           if (showFunding) ...[
             _NumberField(
-              label: '資金調達 負担率の上限',
+              label: '調達負担',
               suffix: '%',
               value: side.maxFundingBurdenPercent,
-              helper: '既定 0.1%。これを超える負担なら見送ります。',
+              dense: true,
               onChanged: (v) =>
                   onChanged(side.copyWith(maxFundingBurdenPercent: v)),
             ),
             _NumberField(
-              label: '資金調達 間隔の下限',
-              suffix: '時間',
+              label: '調達間隔',
+              suffix: 'h',
               value: side.minFundingIntervalHours.toDouble(),
               integer: true,
-              helper: '既定 2 時間。銘柄ごとに 8 / 4 / 1 時間が混在します。',
+              dense: true,
               onChanged: (v) =>
                   onChanged(side.copyWith(minFundingIntervalHours: v.toInt())),
             ),
@@ -766,44 +799,155 @@ class _SideCard extends StatelessWidget {
   }
 }
 
+/// 畳めるひとまとまり。開いているものだけ場所を取る。
 class _Section extends StatelessWidget {
   const _Section({
     required this.title,
     required this.children,
     this.description,
+    this.initiallyExpanded = false,
   });
 
   final String title;
   final String? description;
   final List<Widget> children;
+  final bool initiallyExpanded;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Theme(
+        // 開閉したときに出る境界線を消して、見た目を落ち着かせる。
+        data: theme.copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          title: Text(
+            title,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          subtitle: description == null
+              ? null
+              : Text(
+                  description!,
+                  style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
+                ),
+          initiallyExpanded: initiallyExpanded,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+          childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          expandedCrossAxisAlignment: CrossAxisAlignment.start,
+          children: children,
+        ),
+      ),
+    );
+  }
+}
+
+/// 補足の文。小さく出して場所を取らせない。
+class _Hint extends StatelessWidget {
+  const _Hint(this.text);
+
+  final String text;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 20),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+      padding: const EdgeInsets.only(top: 4, bottom: 8),
+      child: Text(
+        text,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 11),
+      ),
+    );
+  }
+}
+
+/// 説明つきの入り切り。SwitchListTile より縦に詰めてある。
+class _CompactSwitch extends StatelessWidget {
+  const _CompactSwitch({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+    this.subtitle,
+  });
+
+  final String label;
+  final String? subtitle;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: () => onChanged(!value),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(label, style: const TextStyle(fontSize: 13)),
+                  if (subtitle != null)
+                    Text(
+                      subtitle!,
+                      style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
+                    ),
+                ],
               ),
-              if (description != null) ...[
-                const SizedBox(height: 4),
-                Text(
-                  description!,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
-              const SizedBox(height: 12),
-              ...children,
-            ],
-          ),
+            ),
+            SizedBox(
+              height: 28,
+              child: Switch(
+                value: value,
+                onChanged: onChanged,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 2列の中に入れる、いちばん小さい入り切り。
+class _MiniSwitch extends StatelessWidget {
+  const _MiniSwitch({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () => onChanged(!value),
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(label, style: const TextStyle(fontSize: 11)),
+            ),
+            SizedBox(
+              height: 24,
+              child: Switch(
+                value: value,
+                onChanged: onChanged,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -819,6 +963,7 @@ class _NumberField extends StatefulWidget {
     this.suffix,
     this.helper,
     this.integer = false,
+    this.dense = false,
   });
 
   final String label;
@@ -827,6 +972,9 @@ class _NumberField extends StatefulWidget {
   final String? suffix;
   final String? helper;
   final bool integer;
+
+  /// 2列に並べるときの詰めた見た目。説明は出さない。
+  final bool dense;
 
   @override
   State<_NumberField> createState() => _NumberFieldState();
@@ -849,7 +997,7 @@ class _NumberFieldState extends State<_NumberField> {
   @override
   void didUpdateWidget(_NumberField oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 外から値が変わったとき (既定値に戻す等) だけ追従する。
+    // 外から値が変わったとき (既定値に戻す・そろえる等) だけ追従する。
     if (widget.value != oldWidget.value &&
         double.tryParse(_controller.text) != widget.value) {
       _controller.text = _format(widget.value);
@@ -865,9 +1013,10 @@ class _NumberFieldState extends State<_NumberField> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: EdgeInsets.only(bottom: widget.dense ? 6 : 12),
       child: TextField(
         controller: _controller,
+        style: TextStyle(fontSize: widget.dense ? 13 : 14),
         keyboardType: TextInputType.numberWithOptions(
           decimal: !widget.integer,
         ),
@@ -878,10 +1027,15 @@ class _NumberFieldState extends State<_NumberField> {
         ],
         decoration: InputDecoration(
           labelText: widget.label,
+          labelStyle: TextStyle(fontSize: widget.dense ? 12 : 14),
           suffixText: widget.suffix,
-          helperText: widget.helper,
+          suffixStyle: TextStyle(fontSize: widget.dense ? 10 : 12),
+          helperText: widget.dense ? null : widget.helper,
           helperMaxLines: 3,
           isDense: true,
+          contentPadding: widget.dense
+              ? const EdgeInsets.symmetric(horizontal: 8, vertical: 10)
+              : null,
         ),
         onChanged: (text) {
           final value = double.tryParse(text);

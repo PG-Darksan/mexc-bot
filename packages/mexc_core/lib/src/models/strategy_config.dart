@@ -300,7 +300,6 @@ class SideConfig {
 class StrategyConfig {
   const StrategyConfig({
     this.minAmount24Usdt = 5000000,
-    this.maxWatchSymbols = 200,
     this.symbolMode = SymbolSelectionMode.auto,
     this.manualSymbols = const [],
     this.excludedSymbols = const [],
@@ -329,10 +328,9 @@ class StrategyConfig {
 
   // ── 銘柄の絞り込み ───────────────────────────────────────────
   /// 24時間売買代金の下限 (USDT)。既定 5,000,000。
+  ///
+  /// 監視する銘柄数に上限は設けない。ここを上げ下げして絞る。
   final double minAmount24Usdt;
-
-  /// 自動選定時に監視する上限銘柄数 (売買代金の多い順)。
-  final int maxWatchSymbols;
 
   final SymbolSelectionMode symbolMode;
 
@@ -437,7 +435,6 @@ class StrategyConfig {
 
   StrategyConfig copyWith({
     double? minAmount24Usdt,
-    int? maxWatchSymbols,
     SymbolSelectionMode? symbolMode,
     List<String>? manualSymbols,
     List<String>? excludedSymbols,
@@ -459,7 +456,6 @@ class StrategyConfig {
     bool? oneSignalPerBar,
   }) => StrategyConfig(
     minAmount24Usdt: minAmount24Usdt ?? this.minAmount24Usdt,
-    maxWatchSymbols: maxWatchSymbols ?? this.maxWatchSymbols,
     symbolMode: symbolMode ?? this.symbolMode,
     manualSymbols: manualSymbols ?? this.manualSymbols,
     excludedSymbols: excludedSymbols ?? this.excludedSymbols,
@@ -492,7 +488,6 @@ class StrategyConfig {
 
   Map<String, dynamic> toJson() => {
     'minAmount24Usdt': minAmount24Usdt,
-    'maxWatchSymbols': maxWatchSymbols,
     'symbolMode': symbolMode.name,
     'manualSymbols': manualSymbols,
     'excludedSymbols': excludedSymbols,
@@ -542,7 +537,6 @@ class StrategyConfig {
 
     return StrategyConfig(
       minAmount24Usdt: d('minAmount24Usdt', fallback.minAmount24Usdt),
-      maxWatchSymbols: i('maxWatchSymbols', fallback.maxWatchSymbols),
       symbolMode: SymbolSelectionMode.values.firstWhere(
         (e) => e.name == json['symbolMode'],
         orElse: () => fallback.symbolMode,

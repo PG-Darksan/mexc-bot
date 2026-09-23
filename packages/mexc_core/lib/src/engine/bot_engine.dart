@@ -643,6 +643,7 @@ class BotEngine {
           .toList();
     }
 
+    // 銘柄数に上限は設けない。出来高の下限だけで絞る。
     final candidates = _feed.tickers.values
         .where((t) => contracts.containsKey(t.symbol))
         .where((t) => !excluded.contains(t.symbol))
@@ -650,10 +651,7 @@ class BotEngine {
         .toList()
       ..sort((a, b) => b.amount24.compareTo(a.amount24));
 
-    return candidates
-        .take(_config.maxWatchSymbols)
-        .map((t) => t.symbol)
-        .toList();
+    return candidates.map((t) => t.symbol).toList();
   }
 
   // ── 雑務 ────────────────────────────────────────────────────
