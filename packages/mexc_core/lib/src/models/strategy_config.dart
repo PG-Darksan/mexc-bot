@@ -62,8 +62,6 @@ class SideConfig {
     this.limitOffsetPercent = 0.0,
     this.takeProfitFactor = 0.5,
     this.minTakeProfitPercent = 0.3,
-    this.stopLossEnabled = false,
-    this.stopLossPercent = 50.0,
     this.maxFundingBurdenPercent = 0.1,
     this.minFundingIntervalHours = 2,
     this.bandBreakoutEntryEnabled = true,
@@ -105,12 +103,6 @@ class SideConfig {
   /// 利確幅がこの%未満なら見送る。API経由の往復手数料 (0.16%前後) 負け対策。
   final double minTakeProfitPercent;
 
-  /// 損切りを使うか。
-  final bool stopLossEnabled;
-
-  /// 損切り幅 (%)。[stopLossEnabled] が true のときだけ使う。
-  final double stopLossPercent;
-
   /// 資金調達を「支払う側」のとき、この%を超えていたら見送る。
   final double maxFundingBurdenPercent;
 
@@ -141,8 +133,6 @@ class SideConfig {
     limitOffsetPercent: limitOffsetPercent,
     takeProfitFactor: takeProfitFactor,
     minTakeProfitPercent: minTakeProfitPercent,
-    stopLossEnabled: stopLossEnabled,
-    stopLossPercent: stopLossPercent,
     maxFundingBurdenPercent: maxFundingBurdenPercent,
     minFundingIntervalHours: minFundingIntervalHours,
     bandBreakoutEntryEnabled: bandBreakoutEntryEnabled,
@@ -164,12 +154,6 @@ class SideConfig {
     if (takeProfitFactor <= 0 || takeProfitFactor >= 1) {
       errors.add('$name: 利確係数は 0 より大きく 1 未満にしてください。');
     }
-    if (stopLossEnabled && stopLossPercent <= 0) {
-      errors.add('$name: 損切り幅は 0 より大きい値にしてください。');
-    }
-    if (direction.isLong && stopLossEnabled && stopLossPercent >= 100) {
-      errors.add('$name: 損切り幅は 100% 未満にしてください。');
-    }
     if (bandBreakoutEntryEnabled && bandBreakoutPercent <= 0) {
       errors.add('$name: バンドからの乖離幅は 0 より大きい値にしてください。');
     }
@@ -190,8 +174,6 @@ class SideConfig {
     double? limitOffsetPercent,
     double? takeProfitFactor,
     double? minTakeProfitPercent,
-    bool? stopLossEnabled,
-    double? stopLossPercent,
     double? maxFundingBurdenPercent,
     int? minFundingIntervalHours,
     bool? bandBreakoutEntryEnabled,
@@ -206,8 +188,6 @@ class SideConfig {
     limitOffsetPercent: limitOffsetPercent ?? this.limitOffsetPercent,
     takeProfitFactor: takeProfitFactor ?? this.takeProfitFactor,
     minTakeProfitPercent: minTakeProfitPercent ?? this.minTakeProfitPercent,
-    stopLossEnabled: stopLossEnabled ?? this.stopLossEnabled,
-    stopLossPercent: stopLossPercent ?? this.stopLossPercent,
     maxFundingBurdenPercent:
         maxFundingBurdenPercent ?? this.maxFundingBurdenPercent,
     minFundingIntervalHours:
@@ -227,8 +207,6 @@ class SideConfig {
     'limitOffsetPercent': limitOffsetPercent,
     'takeProfitFactor': takeProfitFactor,
     'minTakeProfitPercent': minTakeProfitPercent,
-    'stopLossEnabled': stopLossEnabled,
-    'stopLossPercent': stopLossPercent,
     'maxFundingBurdenPercent': maxFundingBurdenPercent,
     'minFundingIntervalHours': minFundingIntervalHours,
     'bandBreakoutEntryEnabled': bandBreakoutEntryEnabled,
@@ -257,8 +235,6 @@ class SideConfig {
       takeProfitFactor: d('takeProfitFactor', fallback.takeProfitFactor),
       minTakeProfitPercent:
           d('minTakeProfitPercent', fallback.minTakeProfitPercent),
-      stopLossEnabled: b('stopLossEnabled', fallback.stopLossEnabled),
-      stopLossPercent: d('stopLossPercent', fallback.stopLossPercent),
       maxFundingBurdenPercent: d(
         'maxFundingBurdenPercent',
         // 旧形式 (ショートだけの頃) のキーも拾う。

@@ -478,7 +478,6 @@ void main() {
       expect(config.short.rsiThreshold, 97.0);
       expect(config.short.leverage, 1);
       expect(config.short.takeProfitFactor, 0.5);
-      expect(config.short.stopLossEnabled, isFalse);
       expect(config.short.maxFundingBurdenPercent, 0.1);
       expect(config.short.minFundingIntervalHours, 2);
       expect(config.timeframes, [
@@ -501,8 +500,6 @@ void main() {
       expect(l.marginPerTradeUsdt, s.marginPerTradeUsdt);
       expect(l.takeProfitFactor, s.takeProfitFactor);
       expect(l.minTakeProfitPercent, s.minTakeProfitPercent);
-      expect(l.stopLossEnabled, s.stopLossEnabled);
-      expect(l.stopLossPercent, s.stopLossPercent);
       expect(l.maxFundingBurdenPercent, s.maxFundingBurdenPercent);
       expect(l.minFundingIntervalHours, s.minFundingIntervalHours);
       expect(l.limitOffsetPercent, s.limitOffsetPercent);

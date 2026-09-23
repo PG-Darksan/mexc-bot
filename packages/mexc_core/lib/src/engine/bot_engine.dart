@@ -434,7 +434,6 @@ class BotEngine {
           positionId: match.positionId,
           vol: current.vol,
           takeProfitPrice: current.takeProfitPrice,
-          stopLossPrice: current.stopLossPrice,
         );
         _log(BotEvent.info(
           '${position.symbol}: 建玉に利確 ${current.takeProfitPrice} を設定しました',

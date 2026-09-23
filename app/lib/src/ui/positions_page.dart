@@ -104,8 +104,6 @@ class OpenPositionsList extends StatelessWidget {
                     _Field('建値', formatPrice(p.entryPrice)),
                     _Field('現在値', formatPrice(mark)),
                     _Field('利確目標', formatPrice(p.takeProfitPrice)),
-                    if (p.stopLossPrice != null)
-                      _Field('損切り', formatPrice(p.stopLossPrice)),
                     _Field('数量', '${p.vol} 枚'),
                     _Field('名目', '${p.notional.toStringAsFixed(2)} USDT'),
                     _Field('検知時EMA', formatPrice(p.emaAtSignal)),

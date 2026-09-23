@@ -69,16 +69,6 @@ class TradeExecutor {
       evaluation.takeProfitPrice!,
       roundUp: isShort,
     );
-    final stopLoss = side.stopLossEnabled
-        ? contract.roundPrice(
-            entryPrice *
-                (isShort
-                    ? 1 + side.stopLossPercent / 100
-                    : 1 - side.stopLossPercent / 100),
-            roundUp: isShort,
-          )
-        : null;
-
     final id = _newExternalOid();
     final position = ManagedPosition(
       id: id,
@@ -93,7 +83,6 @@ class TradeExecutor {
       emaAtSignal: evaluation.ema ?? 0,
       deviationAtSignal: evaluation.deviation ?? 0,
       takeProfitPrice: takeProfit,
-      stopLossPrice: stopLoss,
       status: ManagedPositionStatus.open,
     );
 
@@ -120,7 +109,6 @@ class TradeExecutor {
       openType: config.openType,
       leverage: side.leverage,
       takeProfitPrice: config.attachTakeProfitToOrder ? takeProfit : null,
-      stopLossPrice: config.attachTakeProfitToOrder ? stopLoss : null,
       positionMode: config.positionModeValue,
       externalOid: id,
     );

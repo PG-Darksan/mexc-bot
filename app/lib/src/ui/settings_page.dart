@@ -333,7 +333,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   _CompactSwitch(
                     label: '分離マージンを使う',
-                    subtitle: '切るとクロスマージン。損切りを置かない運用では分離を推奨。',
+                    subtitle: '切るとクロスマージン。損切りを置かないので分離を推奨。',
                     value: draft.useIsolatedMargin,
                     onChanged: (v) =>
                         _update((c) => c.copyWith(useIsolatedMargin: v)),
@@ -343,7 +343,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
               _Section(
                 title: '利確の出し方',
-                description: '係数と下限、損切りは方向ごとの設定にあります。',
+                description: '係数と下限は方向ごとの設定にあります。損切りは置きません。',
                 children: [
                   _CompactSwitch(
                     label: '発注と同時に利確を取引所へ預ける',
@@ -687,19 +687,6 @@ class _SideCard extends StatelessWidget {
               dense: true,
               onChanged: (v) =>
                   onChanged(side.copyWith(bandBreakoutPercent: v)),
-            ),
-          _MiniSwitch(
-            label: '損切り',
-            value: side.stopLossEnabled,
-            onChanged: (v) => onChanged(side.copyWith(stopLossEnabled: v)),
-          ),
-          if (side.stopLossEnabled)
-            _NumberField(
-              label: '損切り幅',
-              suffix: '%',
-              value: side.stopLossPercent,
-              dense: true,
-              onChanged: (v) => onChanged(side.copyWith(stopLossPercent: v)),
             ),
           if (showFunding) ...[
             _NumberField(

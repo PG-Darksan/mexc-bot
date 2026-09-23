@@ -361,10 +361,6 @@ class _SideConditions extends StatelessWidget {
               'EMA(${config.emaPeriod})乖離 × ${side.takeProfitFactor}',
             ),
             _Condition(
-              '損切り',
-              side.stopLossEnabled ? '${side.stopLossPercent}%' : 'なし',
-            ),
-            _Condition(
               '建玉',
               '${side.marginPerTradeUsdt} USDT × ${side.leverage} 倍',
             ),

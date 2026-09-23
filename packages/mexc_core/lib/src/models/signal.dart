@@ -189,7 +189,6 @@ class ManagedPosition {
     required this.deviationAtSignal,
     required this.takeProfitPrice,
     required this.status,
-    this.stopLossPrice,
     this.exchangeOrderId,
     this.exchangePositionId,
     this.closedAt,
@@ -217,7 +216,6 @@ class ManagedPosition {
   final double deviationAtSignal;
 
   final double takeProfitPrice;
-  final double? stopLossPrice;
   final ManagedPositionStatus status;
   final String? exchangeOrderId;
   final int? exchangePositionId;
@@ -261,7 +259,6 @@ class ManagedPosition {
     emaAtSignal: emaAtSignal,
     deviationAtSignal: deviationAtSignal,
     takeProfitPrice: takeProfitPrice,
-    stopLossPrice: stopLossPrice,
     status: status ?? this.status,
     exchangeOrderId: exchangeOrderId ?? this.exchangeOrderId,
     exchangePositionId: exchangePositionId ?? this.exchangePositionId,
@@ -284,7 +281,6 @@ class ManagedPosition {
     'emaAtSignal': emaAtSignal,
     'deviationAtSignal': deviationAtSignal,
     'takeProfitPrice': takeProfitPrice,
-    'stopLossPrice': stopLossPrice,
     'status': status.name,
     'exchangeOrderId': exchangeOrderId,
     'exchangePositionId': exchangePositionId,
@@ -311,7 +307,6 @@ class ManagedPosition {
         deviationAtSignal:
             (json['deviationAtSignal'] as num?)?.toDouble() ?? 0,
         takeProfitPrice: (json['takeProfitPrice'] as num?)?.toDouble() ?? 0,
-        stopLossPrice: (json['stopLossPrice'] as num?)?.toDouble(),
         status: ManagedPositionStatus.values.firstWhere(
           (e) => e.name == json['status'],
           orElse: () => ManagedPositionStatus.open,
