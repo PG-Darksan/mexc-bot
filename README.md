@@ -119,11 +119,36 @@ API キーを入れずに開始すると、判定だけ行い注文は出しま�
 このフォルダーは「デスクトップ」という日本語を含むパスにあります。Gradle は
 既定で非ASCIIパスを拒むため、`android/gradle.properties` に
 `android.overridePathCheck=true` を入れてあります。この設定で
-`flutter build apk --debug` が通ることは確認済みです。
+`flutter build apk --debug` は通ります。
 
-もし Android のビルドが通らない場合は、プロジェクトを
-`C:\src\mexc` のような ASCII だけのパスに移してください。Windows 側の
-ビルドとテストはこのままで問題ありません。
+**`--release` は日本語パスのままでは通りません。** release は AOT
+コンパイル (gen_snapshot) を通りますが、これが非ASCIIパスの中間ファイルを
+読めず、次のように落ちます。
+
+```
+Error: Unable to read file: ...\デスクトップ\mexc\app\.dart_tool\flutter_build\...\app.dill
+Dart snapshot generator failed with exit code 255
+```
+
+release APK を作るときは、ASCII だけのパスへ写してからビルドしてください。
+
+```bash
+mkdir -p /c/tmp/mexc
+git archive HEAD | tar -x -C /c/tmp/mexc
+
+# gradlew 一式は .gitignore に入っているので、書き出したあとに写す。
+cp app/android/gradlew app/android/gradlew.bat /c/tmp/mexc/app/android/
+cp app/android/gradle/wrapper/gradle-wrapper.jar /c/tmp/mexc/app/android/gradle/wrapper/
+
+cd /c/tmp/mexc/app && flutter build apk --release
+# → build/app/outputs/flutter-apk/app-release.apk (全ABI入り 50MB 前後)
+```
+
+release APK は `android/app/build.gradle.kts` の設定どおり **debug 鍵で
+署名** されます。サイドロードには足りますが、ストアに出すなら keystore を
+用意して `signingConfig` を差し替えてください。
+
+Windows 側のビルドとテストは日本語パスのままで問題ありません。
 
 ### Windows
 
