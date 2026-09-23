@@ -702,6 +702,29 @@ class _SideCard extends StatelessWidget {
             onChanged: (v) => onChanged(side.copyWith(minTakeProfitPercent: v)),
           ),
           SwitchListTile(
+            value: side.bandBreakoutEntryEnabled,
+            onChanged: (v) =>
+                onChanged(side.copyWith(bandBreakoutEntryEnabled: v)),
+            title: const Text('行きすぎたら RSI を見ない'),
+            subtitle: Text(
+              isShort
+                  ? '+σ から大きく離れたら、RSI に関わらず売る'
+                  : '-σ から大きく離れたら、RSI に関わらず買う',
+              style: const TextStyle(fontSize: 11),
+            ),
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+          ),
+          if (side.bandBreakoutEntryEnabled)
+            _NumberField(
+              label: 'σから離れた幅',
+              suffix: '%',
+              value: side.bandBreakoutPercent,
+              helper: '既定 20%。利確はこの乖離の「利確の係数」倍まで戻した位置に置きます。',
+              onChanged: (v) =>
+                  onChanged(side.copyWith(bandBreakoutPercent: v)),
+            ),
+          SwitchListTile(
             value: side.stopLossEnabled,
             onChanged: (v) => onChanged(side.copyWith(stopLossEnabled: v)),
             title: const Text('損切りを使う'),

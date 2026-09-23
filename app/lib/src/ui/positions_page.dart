@@ -4,60 +4,40 @@ import 'package:mexc_core/mexc_core.dart';
 import '../app.dart';
 import 'format.dart';
 
-class PositionsPage extends StatelessWidget {
-  const PositionsPage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final state = AppScope.of(context);
-    final snapshot = state.snapshot;
-
-    return DefaultTabController(
-      length: 2,
-      child: Column(
-        children: [
-          TabBar(
-            tabs: [
-              Tab(text: '保有中 (${snapshot.positions.length})'),
-              Tab(text: '決済済み (${snapshot.closedPositions.length})'),
-            ],
-          ),
-          Expanded(
-            child: TabBarView(
-              children: [
-                _OpenPositions(
-                  positions: snapshot.positions,
-                  markPrices: snapshot.markPrices,
-                  onClose: state.closePosition,
-                ),
-                _ClosedPositions(positions: snapshot.closedPositions),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _OpenPositions extends StatelessWidget {
-  const _OpenPositions({
+/// 保有中の建玉を並べる。状況タブに埋め込んで使う。
+class OpenPositionsList extends StatelessWidget {
+  const OpenPositionsList({
+    super.key,
     required this.positions,
     required this.markPrices,
     required this.onClose,
+    this.embedded = false,
   });
 
   final List<ManagedPosition> positions;
   final Map<String, double> markPrices;
   final Future<void> Function(String id) onClose;
 
+  /// 別のスクロールの中に置くか。true なら自前ではスクロールしない。
+  final bool embedded;
+
   @override
   Widget build(BuildContext context) {
     if (positions.isEmpty) {
-      return const Center(child: Text('保有中のポジションはありません'));
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+          child: Text(
+            '保有中のポジションはありません',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+        ),
+      );
     }
     return ListView.separated(
-      padding: const EdgeInsets.all(16),
+      shrinkWrap: embedded,
+      physics: embedded ? const NeverScrollableScrollPhysics() : null,
+      padding: embedded ? EdgeInsets.zero : const EdgeInsets.all(16),
       itemCount: positions.length,
       separatorBuilder: (_, _) => const SizedBox(height: 12),
       itemBuilder: (context, index) {
@@ -89,8 +69,9 @@ class _OpenPositions extends StatelessWidget {
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: (isShort ? Colors.red : Colors.green)
-                            .withValues(alpha: 0.2),
+                        color: (isShort ? Colors.red : Colors.green).withValues(
+                          alpha: 0.2,
+                        ),
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
@@ -173,9 +154,7 @@ class _OpenPositions extends StatelessWidget {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('ポジションを決済しますか'),
-        content: Text(
-          '${p.symbol} の${p.direction.label} ${p.vol} 枚を成行で決済します。',
-        ),
+        content: Text('${p.symbol} の${p.direction.label} ${p.vol} 枚を成行で決済します。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -205,68 +184,72 @@ double? _takeProfitProgress(ManagedPosition p, double? mark) {
   return (done / span).clamp(0.0, 1.0);
 }
 
-class _ClosedPositions extends StatelessWidget {
-  const _ClosedPositions({required this.positions});
+/// 決済済みの履歴。横に長いので横スクロールで見る。
+class ClosedPositionsTable extends StatelessWidget {
+  const ClosedPositionsTable({super.key, required this.positions});
 
   final List<ManagedPosition> positions;
 
   @override
   Widget build(BuildContext context) {
     if (positions.isEmpty) {
-      return const Center(child: Text('決済済みの記録はありません'));
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+          child: Text(
+            '決済済みの記録はありません',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+        ),
+      );
     }
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      child: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: DataTable(
-            columnSpacing: 20,
-            columns: const [
-              DataColumn(label: Text('銘柄')),
-              DataColumn(label: Text('方向')),
-              DataColumn(label: Text('時間軸')),
-              DataColumn(label: Text('建てた時刻')),
-              DataColumn(label: Text('決済時刻')),
-              DataColumn(label: Text('建値')),
-              DataColumn(label: Text('決済値')),
-              DataColumn(label: Text('数量')),
-              DataColumn(label: Text('損益')),
-              DataColumn(label: Text('備考')),
-            ],
-            rows: [
-              for (final p in positions)
-                DataRow(
-                  cells: [
-                    DataCell(Text(p.symbol.replaceAll('_USDT', ''))),
-                    DataCell(Text(p.direction.label)),
-                    DataCell(Text(p.timeframe.label)),
-                    DataCell(Text(formatTime(p.openedAt))),
-                    DataCell(Text(formatTime(p.closedAt))),
-                    DataCell(Text(formatPrice(p.entryPrice))),
-                    DataCell(Text(formatPrice(p.closePrice))),
-                    DataCell(Text('${p.vol}')),
-                    DataCell(
-                      Text(
-                        formatPnl(p.realizedPnl),
-                        style: TextStyle(
-                          color: (p.realizedPnl ?? 0) >= 0
-                              ? Colors.green
-                              : Colors.red,
-                          fontWeight: FontWeight.w600,
-                        ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: DataTable(
+          columnSpacing: 20,
+          columns: const [
+            DataColumn(label: Text('銘柄')),
+            DataColumn(label: Text('方向')),
+            DataColumn(label: Text('時間軸')),
+            DataColumn(label: Text('建てた時刻')),
+            DataColumn(label: Text('決済時刻')),
+            DataColumn(label: Text('建値')),
+            DataColumn(label: Text('決済値')),
+            DataColumn(label: Text('数量')),
+            DataColumn(label: Text('損益')),
+            DataColumn(label: Text('備考')),
+          ],
+          rows: [
+            for (final p in positions)
+              DataRow(
+                cells: [
+                  DataCell(Text(p.symbol.replaceAll('_USDT', ''))),
+                  DataCell(Text(p.direction.label)),
+                  DataCell(Text(p.timeframe.label)),
+                  DataCell(Text(formatTime(p.openedAt))),
+                  DataCell(Text(formatTime(p.closedAt))),
+                  DataCell(Text(formatPrice(p.entryPrice))),
+                  DataCell(Text(formatPrice(p.closePrice))),
+                  DataCell(Text('${p.vol}')),
+                  DataCell(
+                    Text(
+                      formatPnl(p.realizedPnl),
+                      style: TextStyle(
+                        color: (p.realizedPnl ?? 0) >= 0
+                            ? Colors.green
+                            : Colors.red,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
-                    DataCell(
-                      Text(
-                        p.note ?? '',
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ),
-            ],
-          ),
+                  ),
+                  DataCell(
+                    Text(p.note ?? '', style: const TextStyle(fontSize: 12)),
+                  ),
+                ],
+              ),
+          ],
         ),
       ),
     );

@@ -362,18 +362,24 @@ class BotEngine {
 
     _firedBars[_firedBarKey(evaluation)] = evaluation.barOpenTime;
 
-    final boundary = evaluation.bbBoundary;
-    final sigma = _config.sideOf(evaluation.direction).bbSigma;
+    final side = _config.sideOf(evaluation.direction);
+    final isShort = evaluation.direction.isShort;
+    final band = evaluation.bbBoundary;
+    final sigmaLabel = '${isShort ? "+" : "-"}${side.bbSigma}σ';
+    final detail = evaluation.byBandBreakout
+        ? '$sigmaLabel から '
+            '${((evaluation.bandDeviation ?? 0) * 100).toStringAsFixed(1)}% '
+            '離れたので RSI を見ずに逆張り'
+        : 'RSI ${evaluation.rsi?.toStringAsFixed(1) ?? "-"} / '
+            '$sigmaLabel ${band?.toStringAsFixed(contract.priceScale) ?? "-"} を'
+            '${isShort ? "上抜け" : "下抜け"}';
     _log(
       BotEvent.trade(
         '${evaluation.symbol} ${evaluation.timeframe.label} '
         '${evaluation.direction.label}シグナル検知 '
-        'RSI ${evaluation.rsi!.toStringAsFixed(1)} / '
-        '価格 ${evaluation.price} '
-        '${evaluation.direction.isShort ? ">" : "<"} '
-        '${evaluation.direction.isShort ? "+" : "-"}$sigmaσ '
-        '${boundary!.toStringAsFixed(contract.priceScale)} / '
-        'EMA乖離 ${(evaluation.deviation! * 100).toStringAsFixed(2)}%',
+        '価格 ${evaluation.price} / $detail / '
+        '利確 '
+        '${evaluation.takeProfitPrice?.toStringAsFixed(contract.priceScale) ?? "-"}',
         symbol: evaluation.symbol,
         data: evaluation.toJson(),
       ),

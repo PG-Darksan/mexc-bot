@@ -5,9 +5,7 @@ import '../app.dart';
 import '../settings/app_settings.dart';
 import 'dashboard_page.dart';
 import 'log_page.dart';
-import 'positions_page.dart';
 import 'settings_page.dart';
-import 'signals_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -19,14 +17,9 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _index = 0;
 
+  // 状況タブに口座・建玉・条件をまとめてあるので、タブは3つで足りる。
   static const _destinations = [
     (icon: Icons.dashboard_outlined, selected: Icons.dashboard, label: '状況'),
-    (icon: Icons.radar_outlined, selected: Icons.radar, label: 'シグナル'),
-    (
-      icon: Icons.account_balance_wallet_outlined,
-      selected: Icons.account_balance_wallet,
-      label: 'ポジション',
-    ),
     (icon: Icons.article_outlined, selected: Icons.article, label: 'ログ'),
     (icon: Icons.settings_outlined, selected: Icons.settings, label: '設定'),
   ];
@@ -40,8 +33,6 @@ class _HomePageState extends State<HomePage> {
 
     final pages = const [
       DashboardPage(),
-      SignalsPage(),
-      PositionsPage(),
       LogPage(),
       SettingsPage(),
     ];

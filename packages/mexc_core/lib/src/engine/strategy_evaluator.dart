@@ -11,6 +11,11 @@ import '../models/timeframe.dart';
 /// 通信も発注もしないので単体テストしやすい。進行中の足を含めた
 /// 終値の配列をそのまま受け取り、毎回すべて計算し直す。
 /// ショートとロングは条件が左右対称なので、同じ手順を方向で切り替えて使う。
+///
+/// 入り方は 2 通りある。
+/// * 通常 … RSI がしきい値に届き、かつ σ のバンドを抜けたとき。
+/// * 行きすぎ … バンドから [SideConfig.bandBreakoutPercent] 以上離れたとき。
+///   ここまで離れると RSI は張り付いて動かないので、RSI を見ずに入る。
 class StrategyEvaluator {
   const StrategyEvaluator(this.config);
 
@@ -47,6 +52,8 @@ class StrategyEvaluator {
       BollingerPoint? bb,
       double? ema,
       double? deviation,
+      double? bandDeviation,
+      bool byBandBreakout = false,
       double? takeProfit,
       double? profitPercent,
       double price = 0,
@@ -62,6 +69,8 @@ class StrategyEvaluator {
       bbMiddle: bb?.middle,
       ema: ema,
       deviation: deviation,
+      bandDeviation: bandDeviation,
+      byBandBreakout: byBandBreakout,
       takeProfitPrice: takeProfit,
       expectedProfitPercent: profitPercent,
       fundingRate: funding?.fundingRate,
@@ -86,14 +95,41 @@ class StrategyEvaluator {
     final bb = Indicators.bollinger(closes, config.bbPeriod, side.bbSigma);
     final ema = Indicators.ema(closes, config.emaPeriod);
 
-    double? deviation;
+    // 判定に使うバンド (ショートは +σ、ロングは -σ) と、そこからの乖離率。
+    // バンドの外側を正にして、方向によらず同じ向きで扱う。
+    final boundary = bb == null
+        ? null
+        : (direction.isShort ? bb.upper : bb.lower);
+    double? bandDeviation;
+    if (boundary != null && boundary > 0) {
+      bandDeviation = direction.isShort
+          ? (price - boundary) / boundary
+          : (boundary - price) / boundary;
+    }
+
+    // バンドから大きく離れていれば、RSI を見ずに逆張りで入る。
+    final farBeyondBand = side.bandBreakoutEntryEnabled &&
+        bandDeviation != null &&
+        bandDeviation >= side.bandBreakoutPercent / 100;
+
+    final deviation = (ema != null && ema > 0) ? (price - ema) / ema : null;
+
+    // 利確の基準は入り方で変える。
+    // * 行きすぎで入ったとき … バンドまでの戻りを基準にする。
+    // * 通常 … 検知した瞬間の EMA までの戻りを基準にする。
+    // どちらも「乖離率 × 係数」だけ戻した位置に置く。
     double? takeProfit;
-    double? profitPercent;
-    if (ema != null && ema > 0) {
-      deviation = (price - ema) / ema;
-      // 利確目標は EMA へ向かって乖離のぶんだけ戻したところ。
-      // ショートは price より下、ロングは price より上に出る。
+    if (farBeyondBand) {
+      takeProfit = boundary! *
+          (1 +
+              (direction.isShort ? bandDeviation : -bandDeviation) *
+                  side.takeProfitFactor);
+    } else if (ema != null && ema > 0 && deviation != null) {
       takeProfit = ema * (1 + deviation * side.takeProfitFactor);
+    }
+
+    double? profitPercent;
+    if (takeProfit != null) {
       profitPercent = direction.isShort
           ? (price - takeProfit) / price * 100
           : (takeProfit - price) / price * 100;
@@ -105,6 +141,8 @@ class StrategyEvaluator {
       bb: bb,
       ema: ema,
       deviation: deviation,
+      bandDeviation: bandDeviation,
+      byBandBreakout: farBeyondBand,
       takeProfit: takeProfit,
       profitPercent: profitPercent,
       price: price,
@@ -115,10 +153,15 @@ class StrategyEvaluator {
     }
 
     // RSI は、ショートなら上に振り切ったとき、ロングなら下に振り切ったとき。
-    final rsiReached = rsi != null &&
-        (direction.isShort ? rsi >= side.rsiThreshold : rsi <= side.rsiThreshold);
-    if (!rsiReached) {
-      return reject(RejectReason.rsiNotReached);
+    // バンドから大きく離れているときは見ない。
+    if (!farBeyondBand) {
+      final rsiReached = rsi != null &&
+          (direction.isShort
+              ? rsi >= side.rsiThreshold
+              : rsi <= side.rsiThreshold);
+      if (!rsiReached) {
+        return reject(RejectReason.rsiNotReached);
+      }
     }
 
     // バンドは、ショートなら +σ の上、ロングなら -σ の下に抜けたとき。
@@ -146,11 +189,17 @@ class StrategyEvaluator {
       }
     }
 
-    // 乖離の向きが方向と合っていなければ、利確目標が逆側に出てしまう。
-    final deviationOk = deviation != null &&
-        (direction.isShort ? deviation > 0 : deviation < 0);
-    if (!deviationOk || takeProfit == null) {
+    if (takeProfit == null) {
       return reject(RejectReason.profitTooSmall);
+    }
+    // 通常の入り方では、乖離の向きが方向と合っていないと
+    // 利確目標が逆側に出てしまう。行きすぎで入るときはバンド基準なので要らない。
+    if (!farBeyondBand) {
+      final deviationOk = deviation != null &&
+          (direction.isShort ? deviation > 0 : deviation < 0);
+      if (!deviationOk) {
+        return reject(RejectReason.profitTooSmall);
+      }
     }
     if (profitPercent == null || profitPercent < side.minTakeProfitPercent) {
       return reject(RejectReason.profitTooSmall);
@@ -161,6 +210,8 @@ class StrategyEvaluator {
       bb: bb,
       ema: ema,
       deviation: deviation,
+      bandDeviation: bandDeviation,
+      byBandBreakout: farBeyondBand,
       takeProfit: takeProfit,
       profitPercent: profitPercent,
       price: price,

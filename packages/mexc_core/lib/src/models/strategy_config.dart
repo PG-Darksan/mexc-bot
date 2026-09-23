@@ -84,6 +84,8 @@ class SideConfig {
     this.stopLossPercent = 50.0,
     this.maxFundingBurdenPercent = 0.1,
     this.minFundingIntervalHours = 2,
+    this.bandBreakoutEntryEnabled = true,
+    this.bandBreakoutPercent = 20.0,
   });
 
   /// ショートの既定値 (利用者の指定どおりの条件)。
@@ -133,6 +135,17 @@ class SideConfig {
   /// 資金調達を「支払う側」のとき、調達間隔がこの時間未満なら見送る。
   final int minFundingIntervalHours;
 
+  /// バンドから大きく離れたら、RSI を見ずに逆張りで入るか。
+  ///
+  /// 行きすぎが極端なときは RSI が張り付いて動かなくなることがあるので、
+  /// しきい値に届かなくても入れるようにする逃げ道。
+  final bool bandBreakoutEntryEnabled;
+
+  /// σ のバンドからこの % 以上離れていたら、RSI を見ずに入る。
+  ///
+  /// ショートは +σ の上、ロングは -σ の下にこれだけ離れたときが対象。
+  final double bandBreakoutPercent;
+
   /// 反対方向の設定を、この設定を鏡写しにして作る。
   ///
   /// RSI のしきい値だけ 100 から引いた値にし、他の項目はそのまま揃える。
@@ -150,6 +163,8 @@ class SideConfig {
     stopLossPercent: stopLossPercent,
     maxFundingBurdenPercent: maxFundingBurdenPercent,
     minFundingIntervalHours: minFundingIntervalHours,
+    bandBreakoutEntryEnabled: bandBreakoutEntryEnabled,
+    bandBreakoutPercent: bandBreakoutPercent,
   );
 
   /// この方向の設定に問題があれば日本語で返す。
@@ -173,6 +188,14 @@ class SideConfig {
     if (direction.isLong && stopLossEnabled && stopLossPercent >= 100) {
       errors.add('$name: 損切り幅は 100% 未満にしてください。');
     }
+    if (bandBreakoutEntryEnabled && bandBreakoutPercent <= 0) {
+      errors.add('$name: バンドからの乖離幅は 0 より大きい値にしてください。');
+    }
+    if (direction.isLong &&
+        bandBreakoutEntryEnabled &&
+        bandBreakoutPercent >= 100) {
+      errors.add('$name: バンドからの乖離幅は 100% 未満にしてください。');
+    }
     return errors;
   }
 
@@ -189,6 +212,8 @@ class SideConfig {
     double? stopLossPercent,
     double? maxFundingBurdenPercent,
     int? minFundingIntervalHours,
+    bool? bandBreakoutEntryEnabled,
+    double? bandBreakoutPercent,
   }) => SideConfig(
     direction: direction,
     enabled: enabled ?? this.enabled,
@@ -205,6 +230,9 @@ class SideConfig {
         maxFundingBurdenPercent ?? this.maxFundingBurdenPercent,
     minFundingIntervalHours:
         minFundingIntervalHours ?? this.minFundingIntervalHours,
+    bandBreakoutEntryEnabled:
+        bandBreakoutEntryEnabled ?? this.bandBreakoutEntryEnabled,
+    bandBreakoutPercent: bandBreakoutPercent ?? this.bandBreakoutPercent,
   );
 
   Map<String, dynamic> toJson() => {
@@ -221,6 +249,8 @@ class SideConfig {
     'stopLossPercent': stopLossPercent,
     'maxFundingBurdenPercent': maxFundingBurdenPercent,
     'minFundingIntervalHours': minFundingIntervalHours,
+    'bandBreakoutEntryEnabled': bandBreakoutEntryEnabled,
+    'bandBreakoutPercent': bandBreakoutPercent,
   };
 
   factory SideConfig.fromJson(
@@ -254,6 +284,10 @@ class SideConfig {
       ),
       minFundingIntervalHours:
           i('minFundingIntervalHours', fallback.minFundingIntervalHours),
+      bandBreakoutEntryEnabled:
+          b('bandBreakoutEntryEnabled', fallback.bandBreakoutEntryEnabled),
+      bandBreakoutPercent:
+          d('bandBreakoutPercent', fallback.bandBreakoutPercent),
     );
   }
 }

@@ -40,6 +40,8 @@ class SignalEvaluation {
     required this.bbMiddle,
     required this.ema,
     required this.deviation,
+    required this.bandDeviation,
+    this.byBandBreakout = false,
     required this.takeProfitPrice,
     required this.expectedProfitPercent,
     required this.fundingRate,
@@ -66,6 +68,14 @@ class SignalEvaluation {
 
   /// 価格の EMA からの乖離率 (0.05 = +5%)。ロングでは負になる。
   final double? deviation;
+
+  /// 判定に使うσのバンドからの乖離率 (0.2 = バンドの 20% 外側)。
+  ///
+  /// バンドの外側なら正、内側なら負。方向によらず「外側が正」で揃える。
+  final double? bandDeviation;
+
+  /// RSI を見ずに、バンドからの大きな乖離だけで発火したか。
+  final bool byBandBreakout;
 
   final double? takeProfitPrice;
 
@@ -99,6 +109,8 @@ class SignalEvaluation {
     bbMiddle: bbMiddle,
     ema: ema,
     deviation: deviation,
+    bandDeviation: bandDeviation,
+    byBandBreakout: byBandBreakout,
     takeProfitPrice: takeProfitPrice,
     expectedProfitPercent: expectedProfitPercent,
     fundingRate: fundingRate,
@@ -119,6 +131,8 @@ class SignalEvaluation {
     'bbMiddle': bbMiddle,
     'ema': ema,
     'deviation': deviation,
+    'bandDeviation': bandDeviation,
+    'byBandBreakout': byBandBreakout,
     'takeProfitPrice': takeProfitPrice,
     'expectedProfitPercent': expectedProfitPercent,
     'fundingRate': fundingRate,
@@ -142,6 +156,8 @@ class SignalEvaluation {
         bbMiddle: (json['bbMiddle'] as num?)?.toDouble(),
         ema: (json['ema'] as num?)?.toDouble(),
         deviation: (json['deviation'] as num?)?.toDouble(),
+        bandDeviation: (json['bandDeviation'] as num?)?.toDouble(),
+        byBandBreakout: json['byBandBreakout'] as bool? ?? false,
         takeProfitPrice: (json['takeProfitPrice'] as num?)?.toDouble(),
         expectedProfitPercent:
             (json['expectedProfitPercent'] as num?)?.toDouble(),

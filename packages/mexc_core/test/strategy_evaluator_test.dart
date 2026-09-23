@@ -280,6 +280,85 @@ void main() {
     });
   });
 
+  group('行きすぎたときの逆張り', () {
+    // σ を小さく取り、バンドのすぐ外まで来た状態から大きく離す。
+    // RSI のしきい値は 100 にしてあるので、RSI では発火しない。
+    StrategyConfig cfg({
+      bool enabled = true,
+      double percent = 20,
+      double factor = 0.5,
+      TradeDirection direction = TradeDirection.short,
+    }) {
+      final side = (direction.isShort
+              ? const SideConfig.short()
+              : const SideConfig.long())
+          .copyWith(
+        rsiThreshold: direction.isShort ? 100 : 0,
+        bbSigma: 0.1,
+        minTakeProfitPercent: 0,
+        bandBreakoutEntryEnabled: enabled,
+        bandBreakoutPercent: percent,
+        takeProfitFactor: factor,
+      );
+      return StrategyConfig(
+        fundingFilterEnabled: false,
+        short: direction.isShort ? side : const SideConfig.short(),
+        long: direction.isShort ? const SideConfig.long() : side,
+      );
+    }
+
+    test('切っていれば RSI 未達で見送る', () {
+      final result = run(config: cfg(enabled: false));
+      expect(result.rejectReason, RejectReason.rsiNotReached);
+    });
+
+    test('バンドから離れていれば RSI を見ずに入る', () {
+      final result = run(config: cfg());
+      expect(result.isTriggered, isTrue, reason: '却下: ${result.rejectReason}');
+      expect(result.byBandBreakout, isTrue);
+      expect(result.bandDeviation, greaterThan(0.2));
+    });
+
+    test('離れ方が足りなければ入らない', () {
+      // 実際の乖離より大きな幅を要求すれば、RSI 未達で落ちる。
+      final result = run(config: cfg(percent: 95));
+      expect(result.rejectReason, RejectReason.rsiNotReached);
+      expect(result.byBandBreakout, isFalse);
+    });
+
+    test('利確はバンドからの乖離の半分だけ戻した位置', () {
+      final result = run(config: cfg());
+      final band = result.bbUpper!;
+      final dev = result.bandDeviation!;
+      expect(result.takeProfitPrice, closeTo(band * (1 + dev * 0.5), 1e-9));
+      // 目標は建値とバンドの間に来る。
+      expect(result.takeProfitPrice, lessThan(result.price));
+      expect(result.takeProfitPrice, greaterThan(band));
+    });
+
+    test('係数を変えれば利確の位置も動く', () {
+      final result = run(config: cfg(factor: 0.25));
+      final band = result.bbUpper!;
+      final dev = result.bandDeviation!;
+      expect(result.takeProfitPrice, closeTo(band * (1 + dev * 0.25), 1e-9));
+    });
+
+    test('ロングでも下に離れれば同じように入る', () {
+      final result = run(
+        config: cfg(direction: TradeDirection.long),
+        direction: TradeDirection.long,
+      );
+      expect(result.isTriggered, isTrue, reason: '却下: ${result.rejectReason}');
+      expect(result.byBandBreakout, isTrue);
+      final band = result.bbLower!;
+      final dev = result.bandDeviation!;
+      expect(result.takeProfitPrice, closeTo(band * (1 - dev * 0.5), 1e-9));
+      // 目標は建値より上、バンドより下。
+      expect(result.takeProfitPrice, greaterThan(result.price));
+      expect(result.takeProfitPrice, lessThan(band));
+    });
+  });
+
   group('資金調達率フィルタ', () {
     test('ショートが支払う側で 0.1% を超えたら見送る', () {
       final result = run(fundingInfo: funding(rate: -0.002, cycle: 8));

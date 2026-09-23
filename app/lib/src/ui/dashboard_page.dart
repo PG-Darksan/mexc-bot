@@ -3,6 +3,7 @@ import 'package:mexc_core/mexc_core.dart';
 
 import '../app.dart';
 import 'format.dart';
+import 'positions_page.dart';
 
 class DashboardPage extends StatelessWidget {
   const DashboardPage({super.key});
@@ -93,6 +94,14 @@ class DashboardPage extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 24),
+        _SectionTitle('保有中 (${snapshot.positions.length} 件)'),
+        OpenPositionsList(
+          positions: snapshot.positions,
+          markPrices: snapshot.markPrices,
+          onClose: state.closePosition,
+          embedded: true,
+        ),
+        const SizedBox(height: 24),
         _SectionTitle('いまの条件'),
         Card(
           child: Padding(
@@ -160,6 +169,21 @@ class DashboardPage extends StatelessWidget {
         const SizedBox(height: 24),
         _SectionTitle('直近の検知'),
         _RecentSignals(events: state.events),
+        const SizedBox(height: 24),
+        _SectionTitle(
+          closed.length > 10
+              ? '決済済み (直近 10 件 / 全 ${closed.length} 件)'
+              : '決済済み (${closed.length} 件)',
+        ),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: ClosedPositionsTable(
+              positions: closed.take(10).toList(),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
       ],
     );
   }
@@ -349,6 +373,12 @@ class _SideConditions extends StatelessWidget {
                 '資金調達',
                 '負担 ${side.maxFundingBurdenPercent}% 超 / '
                     '間隔 ${side.minFundingIntervalHours}h 未満は除外',
+              ),
+            if (side.bandBreakoutEntryEnabled)
+              _Condition(
+                '行きすぎ逆張り',
+                '${isShort ? "+" : "-"}${side.bbSigma}σ から '
+                    '${side.bandBreakoutPercent}% 離れたら RSI を見ない',
               ),
           ],
         ),
