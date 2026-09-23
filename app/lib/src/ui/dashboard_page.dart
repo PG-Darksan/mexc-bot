@@ -97,48 +97,62 @@ class DashboardPage extends StatelessWidget {
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
-            child: Wrap(
-              spacing: 24,
-              runSpacing: 12,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _Condition('24h出来高', '${formatUsdtCompact(config.minAmount24Usdt)} USDT 以上'),
-                for (final side in config.enabledSides) ...[
-                  _Condition(
-                    '${side.direction.label} RSI(${config.rsiPeriod})',
-                    '${side.rsiThreshold} '
-                        '${side.direction.isShort ? "以上" : "以下"}',
-                  ),
-                  _Condition(
-                    '${side.direction.label} BB(${config.bbPeriod})',
-                    '${side.direction.isShort ? "+" : "-"}${side.bbSigma}σ を'
-                        '${side.direction.isShort ? "上抜け" : "下抜け"}',
-                  ),
-                  _Condition(
-                    '${side.direction.label} 利確',
-                    'EMA(${config.emaPeriod})乖離 × ${side.takeProfitFactor}',
-                  ),
-                  _Condition(
-                    '${side.direction.label} 損切り',
-                    side.stopLossEnabled ? '${side.stopLossPercent}%' : 'なし',
-                  ),
-                  _Condition(
-                    '${side.direction.label} 建玉',
-                    '${side.marginPerTradeUsdt} USDT × ${side.leverage} 倍',
-                  ),
-                  if (config.fundingFilterEnabled)
+                // 方向に依らない条件。
+                Wrap(
+                  spacing: 24,
+                  runSpacing: 12,
+                  children: [
                     _Condition(
-                      '${side.direction.label} 資金調達',
-                      '負担 ${side.maxFundingBurdenPercent}% 超 / '
-                          '間隔 ${side.minFundingIntervalHours}h 未満は除外',
+                      '24h出来高',
+                      '${formatUsdtCompact(config.minAmount24Usdt)} USDT 以上',
                     ),
-                ],
-                if (!config.fundingFilterEnabled)
-                  const _Condition('資金調達', 'フィルタなし'),
-                _Condition(
-                  '時間軸',
-                  config.timeframes.map((t) => t.label).join(' / '),
+                    _Condition(
+                      '時間軸',
+                      config.timeframes.map((t) => t.label).join(' / '),
+                    ),
+                    _Condition(
+                      '判定間隔',
+                      '${config.evaluationIntervalSeconds} 秒ごと',
+                    ),
+                    if (!config.fundingFilterEnabled)
+                      const _Condition('資金調達', 'フィルタなし'),
+                  ],
                 ),
-                _Condition('判定間隔', '${config.evaluationIntervalSeconds} 秒ごと'),
+                const Divider(height: 24),
+                // ショートとロングは同じ並びで、広い画面では左右に置く。
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final cards = [
+                      for (final side in config.enabledSides)
+                        _SideConditions(side: side, config: config),
+                    ];
+                    if (cards.isEmpty) {
+                      return const Text('ショートもロングも切ってあります。');
+                    }
+                    if (constraints.maxWidth < 560 || cards.length == 1) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          for (var i = 0; i < cards.length; i++) ...[
+                            if (i > 0) const SizedBox(height: 16),
+                            cards[i],
+                          ],
+                        ],
+                      );
+                    }
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: cards[0]),
+                        const SizedBox(width: 16),
+                        Expanded(child: cards[1]),
+                      ],
+                    );
+                  },
+                ),
               ],
             ),
           ),
@@ -268,6 +282,77 @@ class _StatGrid extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// 片方向ぶんの条件をまとめて出す。設定タブと同じ並びにしてある。
+class _SideConditions extends StatelessWidget {
+  const _SideConditions({required this.side, required this.config});
+
+  final SideConfig side;
+  final StrategyConfig config;
+
+  @override
+  Widget build(BuildContext context) {
+    final isShort = side.direction.isShort;
+    final color = isShort ? Colors.redAccent : Colors.green;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(
+              isShort ? Icons.trending_down : Icons.trending_up,
+              size: 16,
+              color: color,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              side.direction.label,
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 24,
+          runSpacing: 12,
+          children: [
+            _Condition(
+              'RSI(${config.rsiPeriod})',
+              '${side.rsiThreshold} ${isShort ? "以上" : "以下"}',
+            ),
+            _Condition(
+              'BB(${config.bbPeriod})',
+              '${isShort ? "+" : "-"}${side.bbSigma}σ を'
+                  '${isShort ? "上抜け" : "下抜け"}',
+            ),
+            _Condition(
+              '利確',
+              'EMA(${config.emaPeriod})乖離 × ${side.takeProfitFactor}',
+            ),
+            _Condition(
+              '損切り',
+              side.stopLossEnabled ? '${side.stopLossPercent}%' : 'なし',
+            ),
+            _Condition(
+              '建玉',
+              '${side.marginPerTradeUsdt} USDT × ${side.leverage} 倍',
+            ),
+            if (config.fundingFilterEnabled)
+              _Condition(
+                '資金調達',
+                '負担 ${side.maxFundingBurdenPercent}% 超 / '
+                    '間隔 ${side.minFundingIntervalHours}h 未満は除外',
+              ),
+          ],
+        ),
+      ],
     );
   }
 }

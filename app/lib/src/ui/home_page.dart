@@ -46,10 +46,13 @@ class _HomePageState extends State<HomePage> {
       SettingsPage(),
     ];
 
-    final wide = MediaQuery.sizeOf(context).width >= 900;
+    final width = MediaQuery.sizeOf(context).width;
+    final wide = width >= 900;
+    // 横に並べると「開始」ボタンに重なる幅では、状態チップを2段目へ落とす。
+    final compactHeader = width < 620;
 
     return Scaffold(
-      appBar: const _TopBar(),
+      appBar: _TopBar(compact: compactHeader),
       body: Column(
         children: [
           const _NoticeBar(),
@@ -98,10 +101,17 @@ class _HomePageState extends State<HomePage> {
 }
 
 class _TopBar extends StatelessWidget implements PreferredSizeWidget {
-  const _TopBar();
+  const _TopBar({required this.compact});
+
+  /// 画面が狭く、状態チップをタイトルの下の段に置くか。
+  final bool compact;
+
+  static const double _barHeight = 56;
+  static const double _chipRowHeight = 40;
 
   @override
-  Size get preferredSize => const Size.fromHeight(56);
+  Size get preferredSize =>
+      Size.fromHeight(compact ? _barHeight + _chipRowHeight : _barHeight);
 
   @override
   Widget build(BuildContext context) {
@@ -109,61 +119,95 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
     final snapshot = state.snapshot;
     final theme = Theme.of(context);
 
-    return AppBar(
-      title: Row(
+    final chips = <Widget>[
+      _Chip(
+        label: state.isLocalMode ? 'ローカル実行' : 'サーバー接続',
+        icon: state.isLocalMode ? Icons.computer : Icons.cloud_outlined,
+        color: theme.colorScheme.primary,
+      ),
+      if (!state.isLocalMode)
+        _Chip(
+          label: switch (state.connection) {
+            ControllerConnection.connected => '接続中',
+            ControllerConnection.connecting => '接続処理中',
+            ControllerConnection.error => '接続エラー',
+            ControllerConnection.disconnected => '未接続',
+          },
+          icon: state.connection == ControllerConnection.connected
+              ? Icons.link
+              : Icons.link_off,
+          color: state.connection == ControllerConnection.connected
+              ? Colors.green
+              : theme.colorScheme.error,
+        ),
+      for (final side in snapshot.config.enabledSides)
+        _Chip(
+          label: side.direction.label,
+          icon: side.direction.isShort
+              ? Icons.trending_down
+              : Icons.trending_up,
+          color: side.direction.isShort ? Colors.redAccent : Colors.green,
+        ),
+    ];
+
+    // 方向を両方入れるとチップが増える。入りきらないぶんは横に流して、
+    // 「開始」ボタンの下へ潜り込まないようにする。
+    Widget chipRow(EdgeInsets padding) => SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: padding,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('MEXC 自動売買'),
-          const SizedBox(width: 16),
-          _Chip(
-            label: state.isLocalMode ? 'ローカル実行' : 'サーバー接続',
-            icon: state.isLocalMode ? Icons.computer : Icons.cloud_outlined,
-            color: theme.colorScheme.primary,
-          ),
-          if (!state.isLocalMode) ...[
-            const SizedBox(width: 8),
-            _Chip(
-              label: switch (state.connection) {
-                ControllerConnection.connected => '接続中',
-                ControllerConnection.connecting => '接続処理中',
-                ControllerConnection.error => '接続エラー',
-                ControllerConnection.disconnected => '未接続',
-              },
-              icon: state.connection == ControllerConnection.connected
-                  ? Icons.link
-                  : Icons.link_off,
-              color: state.connection == ControllerConnection.connected
-                  ? Colors.green
-                  : theme.colorScheme.error,
-            ),
-          ],
-          for (final side in snapshot.config.enabledSides) ...[
-            const SizedBox(width: 8),
-            _Chip(
-              label: side.direction.label,
-              icon: side.direction.isShort
-                  ? Icons.trending_down
-                  : Icons.trending_up,
-              color: side.direction.isShort ? Colors.redAccent : Colors.green,
-            ),
+          for (var i = 0; i < chips.length; i++) ...[
+            if (i > 0) const SizedBox(width: 8),
+            chips[i],
           ],
         ],
       ),
-      actions: [
-        Padding(
-          padding: const EdgeInsets.only(right: 12),
-          child: FilledButton.icon(
-            onPressed: () =>
-                snapshot.running ? state.stop() : state.start(),
-            icon: Icon(snapshot.running ? Icons.stop : Icons.play_arrow),
-            label: Text(snapshot.running ? '停止' : '開始'),
-            style: FilledButton.styleFrom(
-              backgroundColor: snapshot.running
-                  ? theme.colorScheme.error
-                  : theme.colorScheme.primary,
+    );
+
+    final startButton = Padding(
+      padding: const EdgeInsets.only(right: 12),
+      child: FilledButton.icon(
+        onPressed: () => snapshot.running ? state.stop() : state.start(),
+        icon: Icon(snapshot.running ? Icons.stop : Icons.play_arrow),
+        label: Text(snapshot.running ? '停止' : '開始'),
+        style: FilledButton.styleFrom(
+          backgroundColor: snapshot.running
+              ? theme.colorScheme.error
+              : theme.colorScheme.primary,
+        ),
+      ),
+    );
+
+    if (compact) {
+      return AppBar(
+        title: const Text('MEXC 自動売買', overflow: TextOverflow.ellipsis),
+        actions: [startButton],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(_chipRowHeight),
+          child: SizedBox(
+            height: _chipRowHeight,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: chipRow(const EdgeInsets.fromLTRB(16, 0, 16, 8)),
             ),
           ),
         ),
-      ],
+      );
+    }
+
+    return AppBar(
+      title: Row(
+        children: [
+          const Flexible(
+            child: Text('MEXC 自動売買', overflow: TextOverflow.ellipsis),
+          ),
+          const SizedBox(width: 16),
+          Expanded(child: chipRow(EdgeInsets.zero)),
+        ],
+      ),
+      actions: [startButton],
     );
   }
 }
