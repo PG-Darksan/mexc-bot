@@ -1,7 +1,7 @@
 name: mexc_bot_app
 description: MEXC USDT無期限先物の自動売買クライアント (Windows / Android)
 publish_to: 'none'
-version: 0.1.3+4
+version: 0.1.4+5
 
 environment:
   sdk: ^3.11.0

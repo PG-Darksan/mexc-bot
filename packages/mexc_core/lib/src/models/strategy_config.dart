@@ -2,15 +2,6 @@ import 'package:meta/meta.dart';
 
 import 'timeframe.dart';
 
-/// 監視銘柄の選び方。
-enum SymbolSelectionMode {
-  /// 24時間売買代金でふるいにかけ、上位から自動的に選ぶ。
-  auto,
-
-  /// ユーザーが指定した銘柄だけを見る。
-  manual,
-}
-
 /// 新規建ての注文種別。
 enum EntryOrderType {
   /// 成行 (MEXC の type=5)。
@@ -18,15 +9,6 @@ enum EntryOrderType {
 
   /// 指値 (MEXC の type=1)。
   limit,
-}
-
-/// 建玉モード。MEXC の positionMode と同じ。
-enum PositionMode {
-  /// ヘッジ (1)。決済は side=2/4 + positionId。
-  hedge,
-
-  /// 一方向 (2)。reduceOnly が使える。
-  oneWay,
 }
 
 /// 売買の方向。
@@ -300,9 +282,6 @@ class SideConfig {
 class StrategyConfig {
   const StrategyConfig({
     this.minAmount24Usdt = 5000000,
-    this.symbolMode = SymbolSelectionMode.auto,
-    this.manualSymbols = const [],
-    this.excludedSymbols = const [],
     this.timeframes = const [
       Timeframe.m15,
       Timeframe.h1,
@@ -316,12 +295,10 @@ class StrategyConfig {
     this.short = const SideConfig.short(),
     this.long = const SideConfig.long(),
     this.orderType = EntryOrderType.market,
-    this.positionMode = PositionMode.hedge,
     this.useIsolatedMargin = true,
     this.attachTakeProfitToOrder = true,
     this.fundingFilterEnabled = true,
     this.evaluationIntervalSeconds = 60,
-    this.maxConcurrentPositions = 5,
     this.reentryCooldownMinutes = 60,
     this.oneSignalPerBar = true,
   });
@@ -329,16 +306,9 @@ class StrategyConfig {
   // ── 銘柄の絞り込み ───────────────────────────────────────────
   /// 24時間売買代金の下限 (USDT)。既定 5,000,000。
   ///
-  /// 監視する銘柄数に上限は設けない。ここを上げ下げして絞る。
+  /// 監視する銘柄はこの下限だけで決める。銘柄数に上限は設けず、
+  /// 手で選んだり外したりもしない。
   final double minAmount24Usdt;
-
-  final SymbolSelectionMode symbolMode;
-
-  /// [SymbolSelectionMode.manual] のときに監視する銘柄。
-  final List<String> manualSymbols;
-
-  /// どのモードでも常に除外する銘柄。
-  final List<String> excludedSymbols;
 
   // ── 指標 (方向で共通) ───────────────────────────────────────
   /// 判定に使う時間軸。複数指定でき、それぞれ独立に判定する。
@@ -363,8 +333,6 @@ class StrategyConfig {
   // ── エントリー (方向で共通) ─────────────────────────────────
   final EntryOrderType orderType;
 
-  final PositionMode positionMode;
-
   /// 分離マージン (openType=1) を使うか。false ならクロス (2)。
   final bool useIsolatedMargin;
 
@@ -379,9 +347,6 @@ class StrategyConfig {
   /// 判定の実行間隔 (秒)。既定 60 秒。進行中の足も含めて毎回評価する。
   final int evaluationIntervalSeconds;
 
-  /// 同時に持てるポジション数の上限。
-  final int maxConcurrentPositions;
-
   /// 決済後、同じ銘柄に再エントリーするまでの待ち時間 (分)。
   final int reentryCooldownMinutes;
 
@@ -391,8 +356,10 @@ class StrategyConfig {
   /// MEXC の openType に対応する値。
   int get openType => useIsolatedMargin ? 1 : 2;
 
-  /// MEXC の positionMode に対応する値。
-  int get positionModeValue => positionMode == PositionMode.hedge ? 1 : 2;
+  /// MEXC の positionMode に対応する値。一方向モード (2) で固定。
+  ///
+  /// 同じ銘柄に反対向きの建玉を同時に持つことはないので、ヘッジは使わない。
+  int get positionModeValue => 2;
 
   /// MEXC の注文 type に対応する値。
   int get orderTypeValue => orderType == EntryOrderType.market ? 5 : 1;
@@ -416,14 +383,8 @@ class StrategyConfig {
     if (evaluationIntervalSeconds < 5) {
       errors.add('判定間隔は 5 秒以上にしてください。');
     }
-    if (maxConcurrentPositions < 1) {
-      errors.add('同時保有数は 1 以上にしてください。');
-    }
     if (historyBars < bbPeriod + 5 || historyBars < rsiPeriod * 10) {
       errors.add('履歴本数が少なすぎます。指標期間の 10 倍以上を推奨します。');
-    }
-    if (symbolMode == SymbolSelectionMode.manual && manualSymbols.isEmpty) {
-      errors.add('手動モードでは監視銘柄を 1 つ以上指定してください。');
     }
     if (!short.enabled && !long.enabled) {
       errors.add('ショートとロングの両方が切られています。少なくとも片方を入れてください。');
@@ -435,9 +396,6 @@ class StrategyConfig {
 
   StrategyConfig copyWith({
     double? minAmount24Usdt,
-    SymbolSelectionMode? symbolMode,
-    List<String>? manualSymbols,
-    List<String>? excludedSymbols,
     List<Timeframe>? timeframes,
     int? bbPeriod,
     int? rsiPeriod,
@@ -446,19 +404,14 @@ class StrategyConfig {
     SideConfig? short,
     SideConfig? long,
     EntryOrderType? orderType,
-    PositionMode? positionMode,
     bool? useIsolatedMargin,
     bool? attachTakeProfitToOrder,
     bool? fundingFilterEnabled,
     int? evaluationIntervalSeconds,
-    int? maxConcurrentPositions,
     int? reentryCooldownMinutes,
     bool? oneSignalPerBar,
   }) => StrategyConfig(
     minAmount24Usdt: minAmount24Usdt ?? this.minAmount24Usdt,
-    symbolMode: symbolMode ?? this.symbolMode,
-    manualSymbols: manualSymbols ?? this.manualSymbols,
-    excludedSymbols: excludedSymbols ?? this.excludedSymbols,
     timeframes: timeframes ?? this.timeframes,
     bbPeriod: bbPeriod ?? this.bbPeriod,
     rsiPeriod: rsiPeriod ?? this.rsiPeriod,
@@ -467,15 +420,12 @@ class StrategyConfig {
     short: short ?? this.short,
     long: long ?? this.long,
     orderType: orderType ?? this.orderType,
-    positionMode: positionMode ?? this.positionMode,
     useIsolatedMargin: useIsolatedMargin ?? this.useIsolatedMargin,
     attachTakeProfitToOrder:
         attachTakeProfitToOrder ?? this.attachTakeProfitToOrder,
     fundingFilterEnabled: fundingFilterEnabled ?? this.fundingFilterEnabled,
     evaluationIntervalSeconds:
         evaluationIntervalSeconds ?? this.evaluationIntervalSeconds,
-    maxConcurrentPositions:
-        maxConcurrentPositions ?? this.maxConcurrentPositions,
     reentryCooldownMinutes:
         reentryCooldownMinutes ?? this.reentryCooldownMinutes,
     oneSignalPerBar: oneSignalPerBar ?? this.oneSignalPerBar,
@@ -488,9 +438,6 @@ class StrategyConfig {
 
   Map<String, dynamic> toJson() => {
     'minAmount24Usdt': minAmount24Usdt,
-    'symbolMode': symbolMode.name,
-    'manualSymbols': manualSymbols,
-    'excludedSymbols': excludedSymbols,
     'timeframes': timeframes.map((t) => t.name).toList(),
     'bbPeriod': bbPeriod,
     'rsiPeriod': rsiPeriod,
@@ -499,12 +446,10 @@ class StrategyConfig {
     'short': short.toJson(),
     'long': long.toJson(),
     'orderType': orderType.name,
-    'positionMode': positionMode.name,
     'useIsolatedMargin': useIsolatedMargin,
     'attachTakeProfitToOrder': attachTakeProfitToOrder,
     'fundingFilterEnabled': fundingFilterEnabled,
     'evaluationIntervalSeconds': evaluationIntervalSeconds,
-    'maxConcurrentPositions': maxConcurrentPositions,
     'reentryCooldownMinutes': reentryCooldownMinutes,
     'oneSignalPerBar': oneSignalPerBar,
   };
@@ -537,12 +482,6 @@ class StrategyConfig {
 
     return StrategyConfig(
       minAmount24Usdt: d('minAmount24Usdt', fallback.minAmount24Usdt),
-      symbolMode: SymbolSelectionMode.values.firstWhere(
-        (e) => e.name == json['symbolMode'],
-        orElse: () => fallback.symbolMode,
-      ),
-      manualSymbols: s('manualSymbols', fallback.manualSymbols),
-      excludedSymbols: s('excludedSymbols', fallback.excludedSymbols),
       timeframes: tfs.isEmpty ? fallback.timeframes : tfs,
       bbPeriod: i('bbPeriod', fallback.bbPeriod),
       rsiPeriod: i('rsiPeriod', fallback.rsiPeriod),
@@ -554,10 +493,6 @@ class StrategyConfig {
         (e) => e.name == json['orderType'],
         orElse: () => fallback.orderType,
       ),
-      positionMode: PositionMode.values.firstWhere(
-        (e) => e.name == json['positionMode'],
-        orElse: () => fallback.positionMode,
-      ),
       useIsolatedMargin: b('useIsolatedMargin', fallback.useIsolatedMargin),
       attachTakeProfitToOrder:
           b('attachTakeProfitToOrder', fallback.attachTakeProfitToOrder),
@@ -565,8 +500,6 @@ class StrategyConfig {
           b('fundingFilterEnabled', fallback.fundingFilterEnabled),
       evaluationIntervalSeconds:
           i('evaluationIntervalSeconds', fallback.evaluationIntervalSeconds),
-      maxConcurrentPositions:
-          i('maxConcurrentPositions', fallback.maxConcurrentPositions),
       reentryCooldownMinutes:
           i('reentryCooldownMinutes', fallback.reentryCooldownMinutes),
       oneSignalPerBar: b('oneSignalPerBar', fallback.oneSignalPerBar),

@@ -28,8 +28,6 @@ class _SettingsPageState extends State<SettingsPage> {
   final _apiSecretController = TextEditingController();
   final _serverUrlController = TextEditingController();
   final _serverTokenController = TextEditingController();
-  final _manualSymbolsController = TextEditingController();
-  final _excludedSymbolsController = TextEditingController();
   bool _loadedOnce = false;
 
   @override
@@ -49,8 +47,6 @@ class _SettingsPageState extends State<SettingsPage> {
       _apiSecretController.text = state.credentials.apiSecret;
       _serverUrlController.text = state.settings.serverUrl;
       _serverTokenController.text = state.settings.serverToken;
-      _manualSymbolsController.text = state.config.manualSymbols.join(', ');
-      _excludedSymbolsController.text = state.config.excludedSymbols.join(', ');
     });
   }
 
@@ -60,8 +56,6 @@ class _SettingsPageState extends State<SettingsPage> {
     _apiSecretController.dispose();
     _serverUrlController.dispose();
     _serverTokenController.dispose();
-    _manualSymbolsController.dispose();
-    _excludedSymbolsController.dispose();
     super.dispose();
   }
 
@@ -95,10 +89,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _save() async {
     final state = AppScope.of(context);
-    final config = draft.copyWith(
-      manualSymbols: _splitSymbols(_manualSymbolsController.text),
-      excludedSymbols: _splitSymbols(_excludedSymbolsController.text),
-    );
+    final config = draft;
     final errors = config.validate();
     if (errors.isNotEmpty) {
       if (!mounted) return;
@@ -132,12 +123,6 @@ class _SettingsPageState extends State<SettingsPage> {
       context,
     ).showSnackBar(const SnackBar(content: Text('設定を保存しました')));
   }
-
-  List<String> _splitSymbols(String raw) => raw
-      .split(RegExp(r'[,\s]+'))
-      .map((s) => s.trim().toUpperCase())
-      .where((s) => s.isNotEmpty)
-      .toList();
 
   @override
   Widget build(BuildContext context) {
@@ -220,46 +205,9 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
                   ),
                   const _Hint(
-                    '1 M = 100万 USDT。既定 5 M。'
-                    'この下限を満たす銘柄はすべて見ます (銘柄数の上限はありません)。',
-                  ),
-                  const SizedBox(height: 8),
-                  SegmentedButton<SymbolSelectionMode>(
-                    segments: const [
-                      ButtonSegment(
-                        value: SymbolSelectionMode.auto,
-                        label: Text('出来高で自動', style: TextStyle(fontSize: 12)),
-                      ),
-                      ButtonSegment(
-                        value: SymbolSelectionMode.manual,
-                        label: Text('自分で指定', style: TextStyle(fontSize: 12)),
-                      ),
-                    ],
-                    selected: {draft.symbolMode},
-                    onSelectionChanged: (s) =>
-                        _update((c) => c.copyWith(symbolMode: s.first)),
-                  ),
-                  if (draft.symbolMode == SymbolSelectionMode.manual) ...[
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _manualSymbolsController,
-                      decoration: const InputDecoration(
-                        labelText: '監視する銘柄',
-                        hintText: 'BTC_USDT, ETH_USDT',
-                        isDense: true,
-                      ),
-                      maxLines: 2,
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _excludedSymbolsController,
-                    decoration: const InputDecoration(
-                      labelText: '常に除外する銘柄',
-                      hintText: 'AKE_USDT, ONE_USDT',
-                      isDense: true,
-                    ),
-                    maxLines: 2,
+                    '1 M = 100万 USDT。既定 5 M。\n'
+                    '監視する銘柄はこの下限だけで決まります。'
+                    '銘柄数に上限は無く、手で選んだり外したりもしません。',
                   ),
                 ],
               ),
@@ -376,26 +324,12 @@ class _SettingsPageState extends State<SettingsPage> {
                     onSelectionChanged: (s) =>
                         _update((c) => c.copyWith(orderType: s.first)),
                   ),
-                  const SizedBox(height: 12),
-                  SegmentedButton<PositionMode>(
-                    segments: const [
-                      ButtonSegment(
-                        value: PositionMode.hedge,
-                        label: Text('ヘッジ', style: TextStyle(fontSize: 12)),
-                      ),
-                      ButtonSegment(
-                        value: PositionMode.oneWay,
-                        label: Text('一方向', style: TextStyle(fontSize: 12)),
-                      ),
-                    ],
-                    selected: {draft.positionMode},
-                    onSelectionChanged: (s) =>
-                        _update((c) => c.copyWith(positionMode: s.first)),
-                  ),
                   const _Hint(
-                    'ヘッジ … 同じ銘柄で買いと売りを同時に持てます (MEXC の既定)。\n'
-                    '一方向 … 1銘柄につきどちらか片方だけ。反対の注文は決済になります。\n'
-                    'MEXC 側の設定と必ず合わせてください。食い違うと注文が通りません。',
+                    'このボットは一方向モードで動きます。'
+                    '同じ銘柄に建玉があれば向きに関わらず新規を出さないので、'
+                    'ヘッジは使いません。\n'
+                    'MEXC 側も「一方向モード」にしてください。'
+                    '食い違うと決済注文が通らず、起動時に警告が出ます。',
                   ),
                   _CompactSwitch(
                     label: '分離マージンを使う',
@@ -457,27 +391,22 @@ class _SettingsPageState extends State<SettingsPage> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: _NumberField(
-                          label: '同時に持つ上限',
-                          suffix: '件',
-                          value: draft.maxConcurrentPositions.toDouble(),
+                          label: '再エントリー待ち',
+                          suffix: '分',
+                          value: draft.reentryCooldownMinutes.toDouble(),
                           integer: true,
                           dense: true,
                           onChanged: (v) => _update(
-                            (c) => c.copyWith(maxConcurrentPositions: v.toInt()),
+                            (c) => c.copyWith(reentryCooldownMinutes: v.toInt()),
                           ),
                         ),
                       ),
                     ],
                   ),
-                  _NumberField(
-                    label: '同じ銘柄の再エントリー待ち',
-                    suffix: '分',
-                    value: draft.reentryCooldownMinutes.toDouble(),
-                    integer: true,
-                    dense: true,
-                    onChanged: (v) => _update(
-                      (c) => c.copyWith(reentryCooldownMinutes: v.toInt()),
-                    ),
+                  const _Hint(
+                    '同時に持てる件数に上限はありません。'
+                    'ただし建玉のある銘柄には、向きが同じでも違っても新規注文を出しません。'
+                    '決済してからは「再エントリー待ち」の間だけ間を置きます。',
                   ),
                   _CompactSwitch(
                     label: '同じ足では1回だけ発火させる',
@@ -611,8 +540,6 @@ class _SettingsPageState extends State<SettingsPage> {
                   onPressed: () {
                     setState(() {
                       _draft = const StrategyConfig();
-                      _manualSymbolsController.clear();
-                      _excludedSymbolsController.clear();
                     });
                   },
                   child: const Text('既定値', style: TextStyle(fontSize: 12)),

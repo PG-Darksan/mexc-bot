@@ -162,7 +162,8 @@ class TradeExecutor {
       side: position.direction.closeSide,
       openType: config.openType,
       positionId: position.exchangePositionId,
-      reduceOnly: config.positionMode == PositionMode.oneWay ? true : null,
+      // 一方向モードなので、決済は reduceOnly を付けて出す。
+      reduceOnly: true,
       positionMode: config.positionModeValue,
     );
 

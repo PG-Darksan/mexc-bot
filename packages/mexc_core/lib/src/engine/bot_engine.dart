@@ -323,10 +323,9 @@ class BotEngine {
     final key = _firedBarKey(evaluation);
 
     if (isHolding(evaluation.symbol)) {
-      // すでに建玉がある銘柄には、利確 (決済) 以外の注文を出さない。
+      // すでに建玉がある銘柄には、向きが同じでも違っても新規は出さない。
+      // 出すのは利確 (決済) だけ。
       reason = RejectReason.alreadyHolding;
-    } else if (_positions.length >= _config.maxConcurrentPositions) {
-      reason = RejectReason.maxPositions;
     } else {
       final until = _cooldownUntil[evaluation.symbol];
       if (until != null && DateTime.now().isBefore(until)) {
@@ -356,9 +355,9 @@ class BotEngine {
     final contract = _feed.contractOf(evaluation.symbol);
     if (contract == null) return;
 
-    // 同じサイクルで別の時間軸が先に建てている場合があるので、直前にもう一度見る。
+    // 同じサイクルで別の時間軸や反対方向が先に建てている場合があるので、
+    // 発注の直前にもう一度見る。
     if (isHolding(evaluation.symbol)) return;
-    if (_positions.length >= _config.maxConcurrentPositions) return;
 
     _firedBars[_firedBarKey(evaluation)] = evaluation.barOpenTime;
 
@@ -456,13 +455,10 @@ class BotEngine {
     try {
       final mode = await _rest.fetchPositionMode();
       if (mode != _config.positionModeValue) {
-        final actual = mode == 1 ? 'ヘッジ' : '一方向';
-        final wanted = _config.positionMode == PositionMode.hedge
-            ? 'ヘッジ'
-            : '一方向';
         _log(BotEvent.warning(
-          '建玉モードが食い違っています (口座: $actual / 設定: $wanted)。'
-          'MEXC 側の設定に合わせるか、設定タブで変更してください。',
+          '口座が「ヘッジモード」になっています。このボットは一方向モードで動くので、'
+          'MEXC 側を一方向に切り替えてください '
+          '(建玉・未約定注文・プラン注文をすべて無くしてから変更できます)。',
         ));
       }
     } catch (e) {
@@ -633,20 +629,11 @@ class BotEngine {
     }
   }
 
+  /// 監視する銘柄は出来高だけで決める。手で選んだり外したりはしない。
   List<String> _selectSymbols() {
     final contracts = _feed.contracts;
-    final excluded = _config.excludedSymbols.toSet();
-
-    if (_config.symbolMode == SymbolSelectionMode.manual) {
-      return _config.manualSymbols
-          .where((s) => contracts.containsKey(s) && !excluded.contains(s))
-          .toList();
-    }
-
-    // 銘柄数に上限は設けない。出来高の下限だけで絞る。
     final candidates = _feed.tickers.values
         .where((t) => contracts.containsKey(t.symbol))
-        .where((t) => !excluded.contains(t.symbol))
         .where((t) => t.amount24 >= _config.minAmount24Usdt)
         .toList()
       ..sort((a, b) => b.amount24.compareTo(a.amount24));

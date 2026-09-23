@@ -15,7 +15,6 @@ enum RejectReason {
   fundingUnknown('資金調達率が未取得'),
   alreadyHolding('同じ銘柄を保有中'),
   cooldown('クールダウン中'),
-  maxPositions('同時保有数の上限'),
   profitTooSmall('利確幅が小さすぎる'),
   volumeTooSmall('発注数量が最小未満'),
   insufficientBalance('残高不足');
