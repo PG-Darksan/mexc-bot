@@ -270,6 +270,15 @@ class BotServer {
           await engine.closePositionManually(
             message.payload['id'] as String? ?? '',
           );
+        case ClientCommandType.updatePositionExit:
+          await engine.updatePositionExit(
+            message.payload['id'] as String? ?? '',
+            takeProfitPrice:
+                (message.payload['takeProfitPrice'] as num?)?.toDouble(),
+            stopLossPrice:
+                (message.payload['stopLossPrice'] as num?)?.toDouble(),
+            clearStopLoss: message.payload['clearStopLoss'] as bool? ?? false,
+          );
         case ClientCommandType.requestSnapshot:
           client.send(
             WireMessage(

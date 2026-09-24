@@ -573,6 +573,66 @@ class BotEngine {
     ));
   }
 
+  /// 建玉の利確 / 損切りラインを、建てたあとから動かす。
+  ///
+  /// 取引所に預けてある注文を置き直してから、手元の記録を合わせる。
+  /// 取引所への反映に失敗したときは手元も変えない (食い違わせない)。
+  Future<void> updatePositionExit(
+    String id, {
+    double? takeProfitPrice,
+    double? stopLossPrice,
+    bool clearStopLoss = false,
+  }) async {
+    final position = _positions[id];
+    if (position == null) return;
+    final contract = _feed.contractOf(position.symbol);
+    final isShort = position.direction.isShort;
+
+    double round(double price, {required bool forProfit}) {
+      if (contract == null) return price;
+      // 決済注文が約定しやすい側へ丸める。利確と損切りでは向きが逆になる。
+      return contract.roundPrice(price, roundUp: forProfit ? isShort : !isShort);
+    }
+
+    final tp = takeProfitPrice == null
+        ? position.takeProfitPrice
+        : round(takeProfitPrice, forProfit: true);
+    final sl = clearStopLoss
+        ? null
+        : (stopLossPrice == null
+            ? position.stopLossPrice
+            : round(stopLossPrice, forProfit: false));
+
+    if (_rest.hasCredentials && position.exchangePositionId != null) {
+      try {
+        await _rest.placePositionTpSl(
+          positionId: position.exchangePositionId!,
+          vol: position.vol,
+          takeProfitPrice: tp,
+          stopLossPrice: sl,
+        );
+      } catch (e) {
+        _log(BotEvent.error(
+          '${position.symbol}: 利確/損切りの置き直しに失敗: $e',
+          symbol: position.symbol,
+        ));
+        _emitSnapshot();
+        return;
+      }
+    }
+
+    _positions[id] = position.copyWith(
+      takeProfitPrice: tp,
+      stopLossPrice: sl,
+      clearStopLoss: clearStopLoss || sl == null,
+    );
+    _log(BotEvent.info(
+      '${position.symbol}: 利確 $tp / 損切り ${sl ?? "なし"} に置き直しました',
+      symbol: position.symbol,
+    ));
+    _emitSnapshot();
+  }
+
   /// 画面からの手動決済。
   Future<void> closePositionManually(String id) async {
     final position = _positions[id];

@@ -3,6 +3,7 @@ import 'package:mexc_core/mexc_core.dart';
 
 import '../app.dart';
 import '../settings/app_settings.dart';
+import 'chart_page.dart';
 import 'dashboard_page.dart';
 import 'log_page.dart';
 import 'settings_page.dart';
@@ -20,6 +21,11 @@ class _HomePageState extends State<HomePage> {
   // 状況タブに口座・建玉・条件をまとめてあるので、タブは3つで足りる。
   static const _destinations = [
     (icon: Icons.dashboard_outlined, selected: Icons.dashboard, label: '状況'),
+    (
+      icon: Icons.show_chart_outlined,
+      selected: Icons.show_chart,
+      label: 'チャート',
+    ),
     (icon: Icons.article_outlined, selected: Icons.article, label: 'ログ'),
     (icon: Icons.settings_outlined, selected: Icons.settings, label: '設定'),
   ];
@@ -33,6 +39,7 @@ class _HomePageState extends State<HomePage> {
 
     final pages = const [
       DashboardPage(),
+      ChartPage(),
       LogPage(),
       SettingsPage(),
     ];
@@ -215,7 +222,7 @@ class _NoticeBar extends StatelessWidget {
     final state = AppScope.of(context);
     final messages = <String>[
       if (state.notice != null) state.notice!,
-      if (state.snapshot.lastError != null) '直近のエラー: ${state.snapshot.lastError}',
+      if (state.snapshot.lastError != null) 'さっきのエラー: ${state.snapshot.lastError}',
       if (state.isLocalMode && state.credentials.isEmpty)
         'APIキーが未設定です。注文を出すには設定タブで登録してください。',
     ];

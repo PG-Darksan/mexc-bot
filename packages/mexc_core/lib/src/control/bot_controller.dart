@@ -28,6 +28,15 @@ abstract class BotController {
   Future<void> stop();
   Future<void> updateConfig(StrategyConfig config);
   Future<void> closePosition(String id);
+
+  /// 建玉の利確 / 損切りラインを置き直す。
+  Future<void> updatePositionExit(
+    String id, {
+    double? takeProfitPrice,
+    double? stopLossPrice,
+    bool clearStopLoss = false,
+  });
+
   Future<void> dispose();
 }
 
@@ -87,6 +96,19 @@ class LocalBotController implements BotController {
 
   @override
   Future<void> closePosition(String id) => _engine.closePositionManually(id);
+
+  @override
+  Future<void> updatePositionExit(
+    String id, {
+    double? takeProfitPrice,
+    double? stopLossPrice,
+    bool clearStopLoss = false,
+  }) => _engine.updatePositionExit(
+    id,
+    takeProfitPrice: takeProfitPrice,
+    stopLossPrice: stopLossPrice,
+    clearStopLoss: clearStopLoss,
+  );
 
   /// 保存済みの建玉を復元する。
   void restorePositions(Iterable<ManagedPosition> positions) =>

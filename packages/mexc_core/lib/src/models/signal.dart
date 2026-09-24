@@ -189,6 +189,7 @@ class ManagedPosition {
     required this.deviationAtSignal,
     required this.takeProfitPrice,
     required this.status,
+    this.stopLossPrice,
     this.exchangeOrderId,
     this.exchangePositionId,
     this.closedAt,
@@ -215,7 +216,12 @@ class ManagedPosition {
   /// 検知時の乖離率。
   final double deviationAtSignal;
 
+  /// 利確の目標。建てたあとから動かせる。
   final double takeProfitPrice;
+
+  /// 損切りライン。既定では置かず、必要なら建てたあとに入れる。
+  final double? stopLossPrice;
+
   final ManagedPositionStatus status;
   final String? exchangeOrderId;
   final int? exchangePositionId;
@@ -239,6 +245,10 @@ class ManagedPosition {
   }
 
   ManagedPosition copyWith({
+    double? takeProfitPrice,
+    double? stopLossPrice,
+    /// true なら [stopLossPrice] を消す (null は「変えない」の意味なので)。
+    bool clearStopLoss = false,
     ManagedPositionStatus? status,
     String? exchangeOrderId,
     int? exchangePositionId,
@@ -258,7 +268,8 @@ class ManagedPosition {
     leverage: leverage,
     emaAtSignal: emaAtSignal,
     deviationAtSignal: deviationAtSignal,
-    takeProfitPrice: takeProfitPrice,
+    takeProfitPrice: takeProfitPrice ?? this.takeProfitPrice,
+    stopLossPrice: clearStopLoss ? null : (stopLossPrice ?? this.stopLossPrice),
     status: status ?? this.status,
     exchangeOrderId: exchangeOrderId ?? this.exchangeOrderId,
     exchangePositionId: exchangePositionId ?? this.exchangePositionId,
@@ -281,6 +292,7 @@ class ManagedPosition {
     'emaAtSignal': emaAtSignal,
     'deviationAtSignal': deviationAtSignal,
     'takeProfitPrice': takeProfitPrice,
+    'stopLossPrice': stopLossPrice,
     'status': status.name,
     'exchangeOrderId': exchangeOrderId,
     'exchangePositionId': exchangePositionId,
@@ -307,6 +319,7 @@ class ManagedPosition {
         deviationAtSignal:
             (json['deviationAtSignal'] as num?)?.toDouble() ?? 0,
         takeProfitPrice: (json['takeProfitPrice'] as num?)?.toDouble() ?? 0,
+        stopLossPrice: (json['stopLossPrice'] as num?)?.toDouble(),
         status: ManagedPositionStatus.values.firstWhere(
           (e) => e.name == json['status'],
           orElse: () => ManagedPositionStatus.open,

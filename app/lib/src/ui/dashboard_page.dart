@@ -167,12 +167,12 @@ class DashboardPage extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 24),
-        _SectionTitle('直近の検知'),
+        _SectionTitle('最近の検知'),
         _RecentSignals(events: state.events),
         const SizedBox(height: 24),
         _SectionTitle(
           closed.length > 10
-              ? '決済済み (直近 10 件 / 全 ${closed.length} 件)'
+              ? '決済済み (新しい 10 件 / 全 ${closed.length} 件)'
               : '決済済み (${closed.length} 件)',
         ),
         Card(

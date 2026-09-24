@@ -226,6 +226,24 @@ class RemoteBotController implements BotController {
   );
 
   @override
+  Future<void> updatePositionExit(
+    String id, {
+    double? takeProfitPrice,
+    double? stopLossPrice,
+    bool clearStopLoss = false,
+  }) async => _send(
+    WireMessage(
+      type: ClientCommandType.updatePositionExit,
+      payload: {
+        'id': id,
+        if (takeProfitPrice != null) 'takeProfitPrice': takeProfitPrice,
+        if (stopLossPrice != null) 'stopLossPrice': stopLossPrice,
+        'clearStopLoss': clearStopLoss,
+      },
+    ),
+  );
+
+  @override
   Future<void> dispose() async {
     _disposed = true;
     _pingTimer?.cancel();

@@ -135,6 +135,21 @@ class AppState extends ChangeNotifier {
     await _controller?.closePosition(id);
   }
 
+  /// 建玉の利確 / 損切りラインを置き直す。
+  Future<void> updatePositionExit(
+    String id, {
+    double? takeProfitPrice,
+    double? stopLossPrice,
+    bool clearStopLoss = false,
+  }) async {
+    await _controller?.updatePositionExit(
+      id,
+      takeProfitPrice: takeProfitPrice,
+      stopLossPrice: stopLossPrice,
+      clearStopLoss: clearStopLoss,
+    );
+  }
+
   Future<void> updateStrategyConfig(StrategyConfig config) async {
     _config = config;
     await _store.saveStrategyConfig(config);
