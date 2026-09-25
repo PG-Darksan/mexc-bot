@@ -3,7 +3,6 @@ import 'package:mexc_core/mexc_core.dart';
 
 import '../app.dart';
 import 'format.dart';
-import 'positions_page.dart';
 
 class DashboardPage extends StatelessWidget {
   const DashboardPage({super.key});
@@ -94,14 +93,6 @@ class DashboardPage extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 24),
-        _SectionTitle('保有中 (${snapshot.positions.length} 件)'),
-        OpenPositionsList(
-          positions: snapshot.positions,
-          markPrices: snapshot.markPrices,
-          onClose: state.closePosition,
-          embedded: true,
-        ),
-        const SizedBox(height: 24),
         _SectionTitle('いまの条件'),
         Card(
           child: Padding(
@@ -169,20 +160,6 @@ class DashboardPage extends StatelessWidget {
         const SizedBox(height: 24),
         _SectionTitle('最近の検知'),
         _RecentSignals(events: state.events),
-        const SizedBox(height: 24),
-        _SectionTitle(
-          closed.length > 10
-              ? '決済済み (新しい 10 件 / 全 ${closed.length} 件)'
-              : '決済済み (${closed.length} 件)',
-        ),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: ClosedPositionsTable(
-              positions: closed.take(10).toList(),
-            ),
-          ),
-        ),
         const SizedBox(height: 16),
       ],
     );

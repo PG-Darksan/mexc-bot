@@ -226,6 +226,14 @@ class RemoteBotController implements BotController {
   );
 
   @override
+  Future<void> clearHistory({String? id}) async => _send(
+    WireMessage(
+      type: ClientCommandType.clearHistory,
+      payload: {if (id != null) 'id': id},
+    ),
+  );
+
+  @override
   Future<void> updatePositionExit(
     String id, {
     double? takeProfitPrice,

@@ -270,6 +270,9 @@ class BotServer {
           await engine.closePositionManually(
             message.payload['id'] as String? ?? '',
           );
+        case ClientCommandType.clearHistory:
+          engine.clearHistory(id: message.payload['id'] as String?);
+          await store.savePositions(engine.allPositions);
         case ClientCommandType.updatePositionExit:
           await engine.updatePositionExit(
             message.payload['id'] as String? ?? '',

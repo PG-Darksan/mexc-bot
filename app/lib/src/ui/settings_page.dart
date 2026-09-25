@@ -65,6 +65,12 @@ class _SettingsPageState extends State<SettingsPage> {
   void _update(StrategyConfig Function(StrategyConfig) change) =>
       setState(() => _draft = change(draft));
 
+  void _updateShort(SideConfig Function(SideConfig) change) =>
+      _update((c) => c.withSide(change(c.short)));
+
+  void _updateLong(SideConfig Function(SideConfig) change) =>
+      _update((c) => c.withSide(change(c.long)));
+
   void _updateApp(AppSettings Function(AppSettings) change) =>
       setState(() => _appDraft = change(appDraft));
 
@@ -140,34 +146,142 @@ class _SettingsPageState extends State<SettingsPage> {
             children: [
               // ── いちばん触るところ。開いたままにする ──
               _Section(
-                title: 'ショートとロング',
-                description: '同じ項目を左右に並べてあります。'
+                title: 'ショートとロングの条件',
+                description:
+                    '同じ項目を左右に並べてあります。'
                     'RSI のしきい値だけ向きが逆 (既定 97 / 3) です。',
                 initiallyExpanded: true,
                 children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: _SideCard(
-                          side: draft.short,
-                          showLimitOffset: limitOrder,
-                          showFunding: draft.fundingFilterEnabled,
-                          onChanged: (side) => _update((c) => c.withSide(side)),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _SideCard(
-                          side: draft.long,
-                          showLimitOffset: limitOrder,
-                          showFunding: draft.fundingFilterEnabled,
-                          onChanged: (side) => _update((c) => c.withSide(side)),
-                        ),
-                      ),
-                    ],
+                  _PairSwitch(
+                    title: 'この向きで建てる',
+                    shortValue: draft.short.enabled,
+                    longValue: draft.long.enabled,
+                    onShortChanged: (v) =>
+                        _updateShort((x) => x.copyWith(enabled: v)),
+                    onLongChanged: (v) =>
+                        _updateLong((x) => x.copyWith(enabled: v)),
                   ),
-                  const SizedBox(height: 8),
+                  _PairField(
+                    title: 'RSIのしきい値',
+                    shortSuffix: '以上',
+                    longSuffix: '以下',
+                    shortValue: draft.short.rsiThreshold,
+                    longValue: draft.long.rsiThreshold,
+                    onShortChanged: (v) =>
+                        _updateShort((x) => x.copyWith(rsiThreshold: v)),
+                    onLongChanged: (v) =>
+                        _updateLong((x) => x.copyWith(rsiThreshold: v)),
+                  ),
+                  _PairField(
+                    title: 'σ倍率 (エントリー)',
+                    shortValue: draft.short.bbSigma,
+                    longValue: draft.long.bbSigma,
+                    onShortChanged: (v) =>
+                        _updateShort((x) => x.copyWith(bbSigma: v)),
+                    onLongChanged: (v) =>
+                        _updateLong((x) => x.copyWith(bbSigma: v)),
+                  ),
+                  _PairField(
+                    title: 'レバレッジ [倍]',
+                    integer: true,
+                    shortValue: draft.short.leverage.toDouble(),
+                    longValue: draft.long.leverage.toDouble(),
+                    onShortChanged: (v) =>
+                        _updateShort((x) => x.copyWith(leverage: v.toInt())),
+                    onLongChanged: (v) =>
+                        _updateLong((x) => x.copyWith(leverage: v.toInt())),
+                  ),
+                  _PairField(
+                    title: '1回あたりの証拠金 [USDT]',
+                    shortValue: draft.short.marginPerTradeUsdt,
+                    longValue: draft.long.marginPerTradeUsdt,
+                    onShortChanged: (v) =>
+                        _updateShort((x) => x.copyWith(marginPerTradeUsdt: v)),
+                    onLongChanged: (v) =>
+                        _updateLong((x) => x.copyWith(marginPerTradeUsdt: v)),
+                  ),
+                  if (limitOrder)
+                    _PairField(
+                      title: '指値を現在値から離す幅 [%]',
+                      shortValue: draft.short.limitOffsetPercent,
+                      longValue: draft.long.limitOffsetPercent,
+                      onShortChanged: (v) => _updateShort(
+                        (x) => x.copyWith(limitOffsetPercent: v),
+                      ),
+                      onLongChanged: (v) =>
+                          _updateLong((x) => x.copyWith(limitOffsetPercent: v)),
+                    ),
+                  _PairField(
+                    title: '利確の係数',
+                    shortValue: draft.short.takeProfitFactor,
+                    longValue: draft.long.takeProfitFactor,
+                    onShortChanged: (v) =>
+                        _updateShort((x) => x.copyWith(takeProfitFactor: v)),
+                    onLongChanged: (v) =>
+                        _updateLong((x) => x.copyWith(takeProfitFactor: v)),
+                  ),
+                  const _Hint('0.5 = 乖離の半分まで戻ったら利確。0 より大きく 1 未満。'),
+                  _PairField(
+                    title: '利確幅の下限 [%]',
+                    shortValue: draft.short.minTakeProfitPercent,
+                    longValue: draft.long.minTakeProfitPercent,
+                    onShortChanged: (v) => _updateShort(
+                      (x) => x.copyWith(minTakeProfitPercent: v),
+                    ),
+                    onLongChanged: (v) =>
+                        _updateLong((x) => x.copyWith(minTakeProfitPercent: v)),
+                  ),
+                  _PairSwitch(
+                    title: '行きすぎたら RSI を見ない',
+                    shortValue: draft.short.bandBreakoutEntryEnabled,
+                    longValue: draft.long.bandBreakoutEntryEnabled,
+                    onShortChanged: (v) => _updateShort(
+                      (x) => x.copyWith(bandBreakoutEntryEnabled: v),
+                    ),
+                    onLongChanged: (v) => _updateLong(
+                      (x) => x.copyWith(bandBreakoutEntryEnabled: v),
+                    ),
+                  ),
+                  if (draft.short.bandBreakoutEntryEnabled ||
+                      draft.long.bandBreakoutEntryEnabled)
+                    _PairField(
+                      title: 'σから離れた幅 [%]',
+                      shortValue: draft.short.bandBreakoutPercent,
+                      longValue: draft.long.bandBreakoutPercent,
+                      onShortChanged: (v) => _updateShort(
+                        (x) => x.copyWith(bandBreakoutPercent: v),
+                      ),
+                      onLongChanged: (v) => _updateLong(
+                        (x) => x.copyWith(bandBreakoutPercent: v),
+                      ),
+                    ),
+                  if (draft.fundingFilterEnabled) ...[
+                    _PairField(
+                      title: '資金調達 負担率の上限 [%]',
+                      shortValue: draft.short.maxFundingBurdenPercent,
+                      longValue: draft.long.maxFundingBurdenPercent,
+                      onShortChanged: (v) => _updateShort(
+                        (x) => x.copyWith(maxFundingBurdenPercent: v),
+                      ),
+                      onLongChanged: (v) => _updateLong(
+                        (x) => x.copyWith(maxFundingBurdenPercent: v),
+                      ),
+                    ),
+                    _PairField(
+                      title: '資金調達 間隔の下限 [時間]',
+                      integer: true,
+                      shortValue: draft.short.minFundingIntervalHours
+                          .toDouble(),
+                      longValue: draft.long.minFundingIntervalHours.toDouble(),
+                      onShortChanged: (v) => _updateShort(
+                        (x) => x.copyWith(minFundingIntervalHours: v.toInt()),
+                      ),
+                      onLongChanged: (v) => _updateLong(
+                        (x) => x.copyWith(minFundingIntervalHours: v.toInt()),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 4),
                   Row(
                     children: [
                       Expanded(
@@ -175,7 +289,10 @@ class _SettingsPageState extends State<SettingsPage> {
                           onPressed: () => _update(
                             (c) => c.copyWith(long: c.short.mirrored()),
                           ),
-                          child: const Text('← の値を右へ', style: TextStyle(fontSize: 12)),
+                          child: const Text(
+                            'ショート → ロング',
+                            style: TextStyle(fontSize: 12),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -184,12 +301,15 @@ class _SettingsPageState extends State<SettingsPage> {
                           onPressed: () => _update(
                             (c) => c.copyWith(short: c.long.mirrored()),
                           ),
-                          child: const Text('右の値を ← へ', style: TextStyle(fontSize: 12)),
+                          child: const Text(
+                            'ロング → ショート',
+                            style: TextStyle(fontSize: 12),
+                          ),
                         ),
                       ),
                     ],
                   ),
-                  const _Hint('そろえると、RSI のしきい値だけ 100 から引いた値に入れ替わります。'),
+                  const _Hint('そろえると、RSI のしきい値だけ 100 から引いた値になります。'),
                 ],
               ),
 
@@ -222,7 +342,10 @@ class _SettingsPageState extends State<SettingsPage> {
                     children: [
                       for (final tf in Timeframe.values)
                         FilterChip(
-                          label: Text(tf.label, style: const TextStyle(fontSize: 12)),
+                          label: Text(
+                            tf.label,
+                            style: const TextStyle(fontSize: 12),
+                          ),
                           visualDensity: VisualDensity.compact,
                           materialTapTargetSize:
                               MaterialTapTargetSize.shrinkWrap,
@@ -360,7 +483,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 children: [
                   _CompactSwitch(
                     label: 'フィルタを使う',
-                    subtitle: 'その方向が支払う側のときだけ効きます。'
+                    subtitle:
+                        'その方向が支払う側のときだけ効きます。'
                         '負担率と間隔の基準は方向ごとの設定に。',
                     value: draft.fundingFilterEnabled,
                     onChanged: (v) =>
@@ -397,7 +521,8 @@ class _SettingsPageState extends State<SettingsPage> {
                           integer: true,
                           dense: true,
                           onChanged: (v) => _update(
-                            (c) => c.copyWith(reentryCooldownMinutes: v.toInt()),
+                            (c) =>
+                                c.copyWith(reentryCooldownMinutes: v.toInt()),
                           ),
                         ),
                       ),
@@ -419,7 +544,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
               _Section(
                 title: '動かし方',
-                description: '${appDraft.mode == RunMode.local ? "ローカル実行" : "サーバー接続"} '
+                description:
+                    '${appDraft.mode == RunMode.local ? "ローカル実行" : "サーバー接続"} '
                     '(切り替えるとすぐ保存されます)',
                 children: [
                   for (final mode in RunMode.values)
@@ -430,7 +556,10 @@ class _SettingsPageState extends State<SettingsPage> {
                         if (v == null) return;
                         _changeAppSettings((s) => s.copyWith(mode: v));
                       },
-                      title: Text(mode.label, style: const TextStyle(fontSize: 13)),
+                      title: Text(
+                        mode.label,
+                        style: const TextStyle(fontSize: 13),
+                      ),
                       contentPadding: EdgeInsets.zero,
                       visualDensity: VisualDensity.compact,
                       dense: true,
@@ -444,7 +573,8 @@ class _SettingsPageState extends State<SettingsPage> {
                         hintText: 'wss://example.duckdns.org/ws',
                         isDense: true,
                       ),
-                      onChanged: (_) => unawaited(_persistAppSettings(appDraft)),
+                      onChanged: (_) =>
+                          unawaited(_persistAppSettings(appDraft)),
                     ),
                     const SizedBox(height: 8),
                     TextField(
@@ -454,7 +584,8 @@ class _SettingsPageState extends State<SettingsPage> {
                         labelText: '接続トークン',
                         isDense: true,
                       ),
-                      onChanged: (_) => unawaited(_persistAppSettings(appDraft)),
+                      onChanged: (_) =>
+                          unawaited(_persistAppSettings(appDraft)),
                     ),
                     const _Hint(
                       '接続トークンは、サーバーを立てたときに deploy/setup.sh が作る '
@@ -474,8 +605,9 @@ class _SettingsPageState extends State<SettingsPage> {
                     _CompactSwitch(
                       label: 'ウィンドウを閉じてもタスクトレイに残す',
                       value: appDraft.keepRunningInTray,
-                      onChanged: (v) =>
-                          _changeAppSettings((s) => s.copyWith(keepRunningInTray: v)),
+                      onChanged: (v) => _changeAppSettings(
+                        (s) => s.copyWith(keepRunningInTray: v),
+                      ),
                     ),
                   _CompactSwitch(
                     label: 'アプリ起動と同時にボットを動かす',
@@ -563,150 +695,118 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 }
 
-/// 片方向ぶんの設定。ショートとロングで並びを揃え、左右で見比べられるようにする。
-class _SideCard extends StatelessWidget {
-  const _SideCard({
-    required this.side,
-    required this.showLimitOffset,
-    required this.showFunding,
-    required this.onChanged,
+/// 1 つの項目を、ショートとロングで横に並べて出す。
+class _PairField extends StatelessWidget {
+  const _PairField({
+    required this.title,
+    required this.shortValue,
+    required this.longValue,
+    required this.onShortChanged,
+    required this.onLongChanged,
+    this.shortSuffix,
+    this.longSuffix,
+    this.integer = false,
   });
 
-  final SideConfig side;
-  final bool showLimitOffset;
-  final bool showFunding;
-  final ValueChanged<SideConfig> onChanged;
+  final String title;
+  final double shortValue;
+  final double longValue;
+  final ValueChanged<double> onShortChanged;
+  final ValueChanged<double> onLongChanged;
+  final String? shortSuffix;
+  final String? longSuffix;
+  final bool integer;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isShort = side.direction.isShort;
-    final color = isShort ? Colors.redAccent : Colors.green;
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
-      decoration: BoxDecoration(
-        border: Border.all(color: color.withValues(alpha: 0.5)),
-        borderRadius: BorderRadius.circular(8),
-      ),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Text(
+            title,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 6),
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(
-                isShort ? Icons.trending_down : Icons.trending_up,
-                size: 16,
-                color: color,
-              ),
-              const SizedBox(width: 4),
               Expanded(
-                child: Text(
-                  side.direction.label,
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: color,
-                  ),
+                child: _NumberField(
+                  label: 'ショート',
+                  suffix: shortSuffix,
+                  value: shortValue,
+                  integer: integer,
+                  dense: true,
+                  onChanged: onShortChanged,
                 ),
               ),
-              SizedBox(
-                height: 24,
-                child: Switch(
-                  value: side.enabled,
-                  onChanged: (v) => onChanged(side.copyWith(enabled: v)),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              const SizedBox(width: 8),
+              Expanded(
+                child: _NumberField(
+                  label: 'ロング',
+                  suffix: longSuffix,
+                  value: longValue,
+                  integer: integer,
+                  dense: true,
+                  onChanged: onLongChanged,
                 ),
               ),
             ],
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 入り切りを、ショートとロングで横に並べて出す。
+class _PairSwitch extends StatelessWidget {
+  const _PairSwitch({
+    required this.title,
+    required this.shortValue,
+    required this.longValue,
+    required this.onShortChanged,
+    required this.onLongChanged,
+  });
+
+  final String title;
+  final bool shortValue;
+  final bool longValue;
+  final ValueChanged<bool> onShortChanged;
+  final ValueChanged<bool> onLongChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
           Text(
-            isShort ? '+σ を上抜けたら売る' : '-σ を下抜けたら買う',
-            style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
+            title,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
           ),
-          const SizedBox(height: 8),
-          _NumberField(
-            label: 'RSI',
-            suffix: isShort ? '以上' : '以下',
-            value: side.rsiThreshold,
-            dense: true,
-            onChanged: (v) => onChanged(side.copyWith(rsiThreshold: v)),
+          Row(
+            children: [
+              Expanded(
+                child: _MiniSwitch(
+                  label: 'ショート',
+                  value: shortValue,
+                  onChanged: onShortChanged,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _MiniSwitch(
+                  label: 'ロング',
+                  value: longValue,
+                  onChanged: onLongChanged,
+                ),
+              ),
+            ],
           ),
-          _NumberField(
-            label: 'σ倍率',
-            value: side.bbSigma,
-            dense: true,
-            onChanged: (v) => onChanged(side.copyWith(bbSigma: v)),
-          ),
-          _NumberField(
-            label: 'レバ',
-            suffix: '倍',
-            value: side.leverage.toDouble(),
-            integer: true,
-            dense: true,
-            onChanged: (v) => onChanged(side.copyWith(leverage: v.toInt())),
-          ),
-          _NumberField(
-            label: '証拠金',
-            suffix: 'USDT',
-            value: side.marginPerTradeUsdt,
-            dense: true,
-            onChanged: (v) => onChanged(side.copyWith(marginPerTradeUsdt: v)),
-          ),
-          if (showLimitOffset)
-            _NumberField(
-              label: '指値幅',
-              suffix: '%',
-              value: side.limitOffsetPercent,
-              dense: true,
-              onChanged: (v) => onChanged(side.copyWith(limitOffsetPercent: v)),
-            ),
-          _NumberField(
-            label: '利確係数',
-            value: side.takeProfitFactor,
-            dense: true,
-            onChanged: (v) => onChanged(side.copyWith(takeProfitFactor: v)),
-          ),
-          _NumberField(
-            label: '利確下限',
-            suffix: '%',
-            value: side.minTakeProfitPercent,
-            dense: true,
-            onChanged: (v) => onChanged(side.copyWith(minTakeProfitPercent: v)),
-          ),
-          _MiniSwitch(
-            label: '行きすぎ逆張り',
-            value: side.bandBreakoutEntryEnabled,
-            onChanged: (v) =>
-                onChanged(side.copyWith(bandBreakoutEntryEnabled: v)),
-          ),
-          if (side.bandBreakoutEntryEnabled)
-            _NumberField(
-              label: '逆張り幅',
-              suffix: '%',
-              value: side.bandBreakoutPercent,
-              dense: true,
-              onChanged: (v) =>
-                  onChanged(side.copyWith(bandBreakoutPercent: v)),
-            ),
-          if (showFunding) ...[
-            _NumberField(
-              label: '調達負担',
-              suffix: '%',
-              value: side.maxFundingBurdenPercent,
-              dense: true,
-              onChanged: (v) =>
-                  onChanged(side.copyWith(maxFundingBurdenPercent: v)),
-            ),
-            _NumberField(
-              label: '調達間隔',
-              suffix: 'h',
-              value: side.minFundingIntervalHours.toDouble(),
-              integer: true,
-              dense: true,
-              onChanged: (v) =>
-                  onChanged(side.copyWith(minFundingIntervalHours: v.toInt())),
-            ),
-          ],
         ],
       ),
     );
@@ -850,9 +950,7 @@ class _MiniSwitch extends StatelessWidget {
         padding: const EdgeInsets.only(bottom: 4),
         child: Row(
           children: [
-            Expanded(
-              child: Text(label, style: const TextStyle(fontSize: 11)),
-            ),
+            Expanded(child: Text(label, style: const TextStyle(fontSize: 11))),
             SizedBox(
               height: 24,
               child: Switch(
@@ -931,9 +1029,7 @@ class _NumberFieldState extends State<_NumberField> {
       child: TextField(
         controller: _controller,
         style: TextStyle(fontSize: widget.dense ? 13 : 14),
-        keyboardType: TextInputType.numberWithOptions(
-          decimal: !widget.integer,
-        ),
+        keyboardType: TextInputType.numberWithOptions(decimal: !widget.integer),
         inputFormatters: [
           FilteringTextInputFormatter.allow(
             widget.integer ? RegExp(r'[0-9]') : RegExp(r'[0-9.]'),

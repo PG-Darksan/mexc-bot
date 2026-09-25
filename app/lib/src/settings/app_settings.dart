@@ -7,6 +7,9 @@ enum RunMode {
   remote,
 }
 
+/// 画面の明るさ。Flutter の ThemeMode と同じ並び。
+enum AppThemeMode { system, light, dark }
+
 /// アプリ固有の設定 (売買ロジックの設定は mexc_core の StrategyConfig)。
 class AppSettings {
   const AppSettings({
@@ -16,6 +19,7 @@ class AppSettings {
     this.allowSelfSignedCertificate = false,
     this.keepRunningInTray = true,
     this.autoStartBot = false,
+    this.themeMode = AppThemeMode.system,
   });
 
   final RunMode mode;
@@ -31,6 +35,9 @@ class AppSettings {
   /// アプリ起動時にボットも起動するか。
   final bool autoStartBot;
 
+  /// 画面の明るさ。端末に合わせるか、明るい / 暗いを選ぶ。
+  final AppThemeMode themeMode;
+
   AppSettings copyWith({
     RunMode? mode,
     String? serverUrl,
@@ -38,6 +45,7 @@ class AppSettings {
     bool? allowSelfSignedCertificate,
     bool? keepRunningInTray,
     bool? autoStartBot,
+    AppThemeMode? themeMode,
   }) => AppSettings(
     mode: mode ?? this.mode,
     serverUrl: serverUrl ?? this.serverUrl,
@@ -46,6 +54,7 @@ class AppSettings {
         allowSelfSignedCertificate ?? this.allowSelfSignedCertificate,
     keepRunningInTray: keepRunningInTray ?? this.keepRunningInTray,
     autoStartBot: autoStartBot ?? this.autoStartBot,
+    themeMode: themeMode ?? this.themeMode,
   );
 
   Map<String, dynamic> toJson() => {
@@ -55,6 +64,7 @@ class AppSettings {
     'allowSelfSignedCertificate': allowSelfSignedCertificate,
     'keepRunningInTray': keepRunningInTray,
     'autoStartBot': autoStartBot,
+    'themeMode': themeMode.name,
   };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) => AppSettings(
@@ -68,5 +78,9 @@ class AppSettings {
         json['allowSelfSignedCertificate'] as bool? ?? false,
     keepRunningInTray: json['keepRunningInTray'] as bool? ?? true,
     autoStartBot: json['autoStartBot'] as bool? ?? false,
+    themeMode: AppThemeMode.values.firstWhere(
+      (e) => e.name == json['themeMode'],
+      orElse: () => AppThemeMode.system,
+    ),
   );
 }

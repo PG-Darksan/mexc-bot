@@ -573,6 +573,18 @@ class BotEngine {
     ));
   }
 
+  /// 決済済みの記録を消す。[id] が null なら全部消す。
+  ///
+  /// 建玉そのものには触れない。画面の見通しを良くするためだけの操作。
+  void clearHistory({String? id}) {
+    if (id == null) {
+      _closedPositions.clear();
+    } else {
+      _closedPositions.removeWhere((p) => p.id == id);
+    }
+    _emitSnapshot();
+  }
+
   /// 建玉の利確 / 損切りラインを、建てたあとから動かす。
   ///
   /// 取引所に預けてある注文を置き直してから、手元の記録を合わせる。

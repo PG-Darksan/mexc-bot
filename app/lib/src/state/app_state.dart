@@ -135,6 +135,12 @@ class AppState extends ChangeNotifier {
     await _controller?.closePosition(id);
   }
 
+  /// 決済済みの記録を消す。[id] が null なら全部。
+  Future<void> clearHistory({String? id}) async {
+    await _controller?.clearHistory(id: id);
+    await _persistPositions();
+  }
+
   /// 建玉の利確 / 損切りラインを置き直す。
   Future<void> updatePositionExit(
     String id, {

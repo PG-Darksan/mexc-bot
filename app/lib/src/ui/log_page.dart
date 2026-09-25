@@ -23,7 +23,9 @@ class _LogPageState extends State<LogPage> {
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
-    final events = state.events.where((e) => _levels.contains(e.level)).toList();
+    final events = state.events
+        .where((e) => _levels.contains(e.level))
+        .toList();
 
     return Column(
       children: [
@@ -65,9 +67,9 @@ class _LogPageState extends State<LogPage> {
                       )
                       .join('\n');
                   Clipboard.setData(ClipboardData(text: text));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('ログをコピーしました')),
-                  );
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(const SnackBar(content: Text('ログをコピーしました')));
                 },
               ),
             ],
@@ -99,7 +101,11 @@ class _LogPageState extends State<LogPage> {
                               ),
                             ),
                           ),
-                          Icon(_levelIcon(e.level), size: 14, color: _levelColor(e.level)),
+                          Icon(
+                            _levelIcon(e.level),
+                            size: 14,
+                            color: _levelColor(e.level),
+                          ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: SelectableText(

@@ -3,9 +3,10 @@ import 'package:mexc_core/mexc_core.dart';
 
 import '../app.dart';
 import '../settings/app_settings.dart';
+import '../settings/app_settings.dart';
 import 'chart_page.dart';
 import 'dashboard_page.dart';
-import 'log_page.dart';
+import 'orders_page.dart';
 import 'settings_page.dart';
 
 class HomePage extends StatefulWidget {
@@ -18,16 +19,23 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _index = 0;
 
-  // 状況タブに口座・建玉・条件をまとめてあるので、タブは3つで足りる。
   static const _destinations = [
-    (icon: Icons.dashboard_outlined, selected: Icons.dashboard, label: '状況'),
     (
-      icon: Icons.show_chart_outlined,
-      selected: Icons.show_chart,
+      icon: Icons.account_balance_wallet_outlined,
+      selected: Icons.account_balance_wallet,
+      label: '残高',
+    ),
+    (
+      icon: Icons.candlestick_chart_outlined,
+      selected: Icons.candlestick_chart,
       label: 'チャート',
     ),
-    (icon: Icons.article_outlined, selected: Icons.article, label: 'ログ'),
-    (icon: Icons.settings_outlined, selected: Icons.settings, label: '設定'),
+    (
+      icon: Icons.receipt_long_outlined,
+      selected: Icons.receipt_long,
+      label: '履歴',
+    ),
+    (icon: Icons.tune_outlined, selected: Icons.tune, label: '設定'),
   ];
 
   @override
@@ -40,7 +48,7 @@ class _HomePageState extends State<HomePage> {
     final pages = const [
       DashboardPage(),
       ChartPage(),
-      LogPage(),
+      OrdersPage(),
       SettingsPage(),
     ];
 
@@ -168,6 +176,24 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
       ),
     );
 
+    final brightnessButton = IconButton(
+      tooltip: '明るさを切り替える',
+      icon: Icon(
+        theme.brightness == Brightness.dark
+            ? Icons.light_mode_outlined
+            : Icons.dark_mode_outlined,
+        size: 20,
+      ),
+      onPressed: () {
+        final toDark = theme.brightness != Brightness.dark;
+        state.updateAppSettings(
+          state.settings.copyWith(
+            themeMode: toDark ? AppThemeMode.dark : AppThemeMode.light,
+          ),
+        );
+      },
+    );
+
     final startButton = Padding(
       padding: const EdgeInsets.only(right: 12),
       child: FilledButton.icon(
@@ -185,7 +211,7 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
     if (compact) {
       return AppBar(
         title: const Text('MEXC 自動売買', overflow: TextOverflow.ellipsis),
-        actions: [startButton],
+        actions: [brightnessButton, startButton],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(_chipRowHeight),
           child: SizedBox(
@@ -209,7 +235,7 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
           Expanded(child: chipRow(EdgeInsets.zero)),
         ],
       ),
-      actions: [startButton],
+      actions: [brightnessButton, startButton],
     );
   }
 }
@@ -222,7 +248,8 @@ class _NoticeBar extends StatelessWidget {
     final state = AppScope.of(context);
     final messages = <String>[
       if (state.notice != null) state.notice!,
-      if (state.snapshot.lastError != null) 'さっきのエラー: ${state.snapshot.lastError}',
+      if (state.snapshot.lastError != null)
+        'さっきのエラー: ${state.snapshot.lastError}',
       if (state.isLocalMode && state.credentials.isEmpty)
         'APIキーが未設定です。注文を出すには設定タブで登録してください。',
     ];

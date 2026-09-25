@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'desktop/tray_service.dart';
+import 'settings/app_settings.dart';
 import 'state/app_state.dart';
 import 'ui/home_page.dart';
 
@@ -68,13 +69,21 @@ class _MexcBotAppState extends State<MexcBotApp> {
   Widget build(BuildContext context) {
     return AppScope(
       state: widget.state,
-      child: MaterialApp(
-        title: 'MEXC 自動売買',
-        debugShowCheckedModeBanner: false,
-        theme: _buildTheme(Brightness.light),
-        darkTheme: _buildTheme(Brightness.dark),
-        themeMode: ThemeMode.dark,
-        home: const HomePage(),
+      // 設定が変わったら明るさもすぐ切り替わるように、ここで聞いておく。
+      child: ListenableBuilder(
+        listenable: widget.state,
+        builder: (context, _) => MaterialApp(
+          title: 'MEXC 自動売買',
+          debugShowCheckedModeBanner: false,
+          theme: _buildTheme(Brightness.light),
+          darkTheme: _buildTheme(Brightness.dark),
+          themeMode: switch (widget.state.settings.themeMode) {
+            AppThemeMode.system => ThemeMode.system,
+            AppThemeMode.light => ThemeMode.light,
+            AppThemeMode.dark => ThemeMode.dark,
+          },
+          home: const HomePage(),
+        ),
       ),
     );
   }
