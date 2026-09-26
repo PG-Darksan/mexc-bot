@@ -21,14 +21,14 @@ class _HomePageState extends State<HomePage> {
 
   static const _destinations = [
     (
-      icon: Icons.account_balance_wallet_outlined,
-      selected: Icons.account_balance_wallet,
-      label: '残高',
-    ),
-    (
       icon: Icons.candlestick_chart_outlined,
       selected: Icons.candlestick_chart,
       label: 'チャート',
+    ),
+    (
+      icon: Icons.account_balance_wallet_outlined,
+      selected: Icons.account_balance_wallet,
+      label: '残高',
     ),
     (
       icon: Icons.receipt_long_outlined,
@@ -46,8 +46,8 @@ class _HomePageState extends State<HomePage> {
     }
 
     final pages = const [
-      DashboardPage(),
       ChartPage(),
+      DashboardPage(),
       OrdersPage(),
       SettingsPage(),
     ];

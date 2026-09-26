@@ -55,6 +55,9 @@ class AppState extends ChangeNotifier {
 
     if (_settings.autoStartBot) {
       await start();
+    } else if (_credentials.apiKey.isNotEmpty) {
+      // 起動しない設定でも、口座の中身は最初に一度見せる。
+      await refreshAccount();
     }
 
     // ローカル実行の建玉は端末に残しておく。
@@ -135,6 +138,11 @@ class AppState extends ChangeNotifier {
     await _controller?.closePosition(id);
   }
 
+  /// 口座と建玉を取り直す。止まっていても使える。
+  Future<void> refreshAccount() async {
+    await _controller?.refreshAccount();
+  }
+
   /// 決済済みの記録を消す。[id] が null なら全部。
   Future<void> clearHistory({String? id}) async {
     await _controller?.clearHistory(id: id);
@@ -187,6 +195,10 @@ class AppState extends ChangeNotifier {
     // ローカル実行では APIキーをエンジンに渡し直す必要がある。
     if (_settings.mode == RunMode.local) {
       await _rebuildController();
+    }
+    // キーを入れたら、止まっていてもすぐ残高を見に行く。
+    if (credentials.apiKey.isNotEmpty && credentials.apiSecret.isNotEmpty) {
+      await refreshAccount();
     }
   }
 

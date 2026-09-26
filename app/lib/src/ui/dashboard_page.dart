@@ -23,54 +23,36 @@ class DashboardPage extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        _SectionTitle('稼働状況'),
-        _StatGrid(
-          items: [
-            _Stat(
-              '状態',
-              snapshot.running ? '稼働中' : '停止中',
-              color: snapshot.running ? Colors.green : Colors.grey,
-            ),
-            _Stat(
-              '相場データ',
-              snapshot.wsConnected ? '接続中' : '未接続',
-              color: snapshot.wsConnected ? Colors.green : Colors.orange,
-            ),
-            _Stat('監視銘柄', '${snapshot.watchedSymbolCount} 銘柄'),
-            _Stat('購読系列', '${snapshot.subscriptionCount} 系列'),
-            if (snapshot.pendingHistoryCount > 0)
-              _Stat(
-                '履歴の読み込み',
-                '残り ${snapshot.pendingHistoryCount} 系列',
-                color: Colors.orange,
-              ),
-            _Stat('最終判定', formatTimeShort(snapshot.lastCycleAt)),
-            _Stat(
-              '判定所要',
-              snapshot.lastCycleDurationMs == null
-                  ? '-'
-                  : '${snapshot.lastCycleDurationMs} ms',
+        Row(
+          children: [
+            Expanded(child: _SectionTitle('口座')),
+            FilledButton.tonalIcon(
+              onPressed: state.refreshAccount,
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('更新'),
             ),
           ],
         ),
-        const SizedBox(height: 24),
-        _SectionTitle('口座'),
+        if (!snapshot.credentialsConfigured)
+          const _Note('APIキーを入れると、口座の中身が出ます (設定タブ)。')
+        else if (snapshot.asset == null)
+          const _Note('「更新」を押すと、いまの残高を取りに行きます。'),
         _StatGrid(
           items: [
             _Stat(
-              '残高',
+              '使えるお金',
               snapshot.asset == null
                   ? '-'
                   : '${snapshot.asset!.availableBalance.toStringAsFixed(2)} USDT',
             ),
             _Stat(
-              '証拠金',
+              '建玉に使っている分',
               snapshot.asset == null
                   ? '-'
                   : '${snapshot.asset!.positionMargin.toStringAsFixed(2)} USDT',
             ),
             _Stat(
-              '評価損益',
+              'いまの含み損益',
               snapshot.asset == null
                   ? '-'
                   : formatPnl(snapshot.asset!.unrealized),
@@ -78,19 +60,58 @@ class DashboardPage extends StatelessWidget {
                   ? Colors.green
                   : Colors.red,
             ),
-            _Stat('保有中', '${snapshot.positions.length} 件'),
-            _Stat('決済済み', '${closed.length} 件'),
+            _Stat('持っている建玉', '${snapshot.positions.length} 件'),
+            _Stat('決済した回数', '${closed.length} 回'),
             _Stat(
-              '累計損益',
+              'これまでの損益',
               formatPnl(totalPnl),
               color: totalPnl >= 0 ? Colors.green : Colors.red,
             ),
             if (closed.isNotEmpty)
               _Stat(
-                '勝率',
+                '勝った割合',
                 '${(wins / closed.length * 100).toStringAsFixed(1)}%',
               ),
           ],
+        ),
+        const SizedBox(height: 24),
+        _SectionTitle('いまの様子'),
+        _StatGrid(
+          items: [
+            _Stat(
+              'ボット',
+              snapshot.running ? '動いています' : '止まっています',
+              color: snapshot.running ? Colors.green : Colors.grey,
+            ),
+            _Stat(
+              '値動きの受信',
+              snapshot.wsConnected ? 'つながっています' : '切れています',
+              color: snapshot.wsConnected ? Colors.green : Colors.orange,
+            ),
+            _Stat('見ている銘柄', '${snapshot.watchedSymbolCount} 銘柄'),
+            _Stat('見ている足', '${snapshot.subscriptionCount} 本'),
+            if (snapshot.pendingHistoryCount > 0)
+              _Stat(
+                '読み込み待ち',
+                '残り ${snapshot.pendingHistoryCount} 本',
+                color: Colors.orange,
+              ),
+            _Stat('前回の判定', formatTimeShort(snapshot.lastCycleAt)),
+            _Stat(
+              '1回にかかった時間',
+              snapshot.lastCycleDurationMs == null
+                  ? '-'
+                  : '${(snapshot.lastCycleDurationMs! / 1000).toStringAsFixed(1)} 秒',
+            ),
+          ],
+        ),
+        _Note(
+          '「見ている足」は 銘柄 × 時間軸 の本数です '
+          '(100銘柄 × 4時間軸なら 400 本)。\n'
+          '「1回にかかった時間」は、その全部を1周して調べ、建玉を取引所と'
+          '突き合わせるまでの時間です。'
+          '判定の間隔 (${config.evaluationIntervalSeconds} 秒) より短ければ'
+          '追いついています。',
         ),
         const SizedBox(height: 24),
         _SectionTitle('いまの条件'),
@@ -199,6 +220,24 @@ class _RecentSignals extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// 画面の下に添える短い説明。
+class _Note extends StatelessWidget {
+  const _Note(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 2),
+      child: Text(
+        text,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 11),
       ),
     );
   }

@@ -226,6 +226,10 @@ class RemoteBotController implements BotController {
   );
 
   @override
+  Future<void> refreshAccount() async =>
+      _send(const WireMessage(type: ClientCommandType.refreshAccount));
+
+  @override
   Future<void> clearHistory({String? id}) async => _send(
     WireMessage(
       type: ClientCommandType.clearHistory,

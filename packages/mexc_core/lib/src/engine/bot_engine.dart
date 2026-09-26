@@ -573,6 +573,20 @@ class BotEngine {
     ));
   }
 
+  /// 口座と建玉だけを取り直す。
+  ///
+  /// 判定サイクルの中でしか取りに行かないと、止めている間は残高が
+  /// いつまでも空のままになる。画面から呼べるようにしておく。
+  Future<void> refreshAccount() async {
+    if (!_rest.hasCredentials) {
+      _log(BotEvent.warning('APIキーが未設定です。残高を取れません。'));
+      _emitSnapshot();
+      return;
+    }
+    await _syncExchangeState();
+    _emitSnapshot();
+  }
+
   /// 決済済みの記録を消す。[id] が null なら全部消す。
   ///
   /// 建玉そのものには触れない。画面の見通しを良くするためだけの操作。

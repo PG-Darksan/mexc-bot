@@ -36,6 +36,7 @@ class _ChartPageState extends State<ChartPage> {
   Timeframe _timeframe = Timeframe.d1;
   List<Candle> _candles = const [];
   List<FearGreedPoint> _fearGreed = const [];
+  List<String> _allSymbols = const [];
   bool _loadingChart = false;
   bool _loadingIndex = false;
   String? _chartError;
@@ -52,6 +53,18 @@ class _ChartPageState extends State<ChartPage> {
     super.initState();
     _loadChart();
     _loadIndex();
+    _loadSymbols();
+  }
+
+  /// 検索に使う銘柄の一覧。取れなくてもチャートは見られるので、黙って諦める。
+  Future<void> _loadSymbols() async {
+    try {
+      final names = await _source.symbols();
+      if (!mounted) return;
+      setState(() => _allSymbols = names);
+    } catch (_) {
+      // 一覧が無いときは、保有銘柄と BTC だけ選べる状態のままにする。
+    }
   }
 
   @override
@@ -156,15 +169,14 @@ class _ChartPageState extends State<ChartPage> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
       children: [
-        _Heading('マーケット'),
-        const SizedBox(height: 8),
-        _FearGreedCard(
-          points: _fearGreed,
-          loading: _loadingIndex,
-          error: _indexError,
-          onRefresh: _loadIndex,
+        _SymbolSearch(
+          symbols: _allSymbols,
+          onSelected: (s) {
+            setState(() => _symbol = s);
+            _loadChart();
+          },
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
         _ChartCard(
           symbol: _symbol,
           symbols: symbols,
@@ -216,6 +228,15 @@ class _ChartPageState extends State<ChartPage> {
             onApply: () => _applyExitLines(position),
           ),
         ],
+        const SizedBox(height: 20),
+        _Heading('相場のムード'),
+        const SizedBox(height: 8),
+        _FearGreedCard(
+          points: _fearGreed,
+          loading: _loadingIndex,
+          error: _indexError,
+          onRefresh: _loadIndex,
+        ),
       ],
     );
   }
@@ -245,6 +266,75 @@ class _ChartPageState extends State<ChartPage> {
           emphasized: _editing == _ExitLine.stopLoss,
         ),
     ];
+  }
+}
+
+/// 銘柄を名前で探す。取引できる USDT 無期限だけが候補に出る。
+class _SymbolSearch extends StatelessWidget {
+  const _SymbolSearch({required this.symbols, required this.onSelected});
+
+  final List<String> symbols;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Autocomplete<String>(
+      optionsBuilder: (value) {
+        final q = value.text.trim().toUpperCase();
+        if (q.isEmpty) return const Iterable<String>.empty();
+        return symbols.where((s) => s.contains(q)).take(20);
+      },
+      displayStringForOption: (s) => s.replaceAll('_USDT', ''),
+      onSelected: onSelected,
+      fieldViewBuilder: (context, controller, focusNode, onSubmit) => TextField(
+        controller: controller,
+        focusNode: focusNode,
+        textCapitalization: TextCapitalization.characters,
+        decoration: InputDecoration(
+          labelText: '銘柄を探す',
+          hintText: symbols.isEmpty ? '一覧を読み込み中…' : 'BTC / ETH / SOL …',
+          isDense: true,
+          prefixIcon: const Icon(Icons.search, size: 18),
+        ),
+        onSubmitted: (text) {
+          final q = text.trim().toUpperCase();
+          if (q.isEmpty) return;
+          // そのままの名前か、_USDT を足した名前が一覧にあれば切り替える。
+          final hit = symbols.firstWhere(
+            (s) => s == q || s == '${q}_USDT',
+            orElse: () => '',
+          );
+          if (hit.isNotEmpty) onSelected(hit);
+        },
+      ),
+      optionsViewBuilder: (context, onTap, options) => Align(
+        alignment: Alignment.topLeft,
+        child: Material(
+          elevation: 4,
+          borderRadius: BorderRadius.circular(8),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 260, maxWidth: 260),
+            child: ListView.builder(
+              shrinkWrap: true,
+              padding: EdgeInsets.zero,
+              itemCount: options.length,
+              itemBuilder: (context, i) {
+                final s = options.elementAt(i);
+                return ListTile(
+                  dense: true,
+                  visualDensity: VisualDensity.compact,
+                  title: Text(
+                    s.replaceAll('_USDT', ''),
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  onTap: () => onTap(s),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -451,7 +541,7 @@ class _ChartCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    '${symbol.replaceAll('_', '')} チャート',
+                    '${symbol.replaceAll('_USDT', '')} の値動き',
                     style: theme.textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
@@ -518,9 +608,9 @@ class _ChartCard extends StatelessWidget {
             const SizedBox(height: 8),
             if (last != null)
               Text(
-                'Last=${formatPrice(last)}'
-                '${change == null ? '' : ' / 期間 ${change >= 0 ? '+' : ''}${change.toStringAsFixed(2)}%'}'
-                '${rsi == null ? '' : ' / RSI${config.rsiPeriod}=${rsi.toStringAsFixed(1)}'}',
+                '現在値 ${formatPrice(last)}'
+                '${change == null ? '' : '  /  この期間 ${change >= 0 ? '+' : ''}${change.toStringAsFixed(2)}%'}'
+                '${rsi == null ? '' : '  /  RSI(${config.rsiPeriod}) ${rsi.toStringAsFixed(1)}'}',
                 style: theme.textTheme.bodySmall,
               ),
             const SizedBox(height: 4),

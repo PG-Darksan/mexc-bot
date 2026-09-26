@@ -29,6 +29,9 @@ abstract class BotController {
   Future<void> updateConfig(StrategyConfig config);
   Future<void> closePosition(String id);
 
+  /// 口座と建玉を取り直す。止まっていても使える。
+  Future<void> refreshAccount();
+
   /// 決済済みの記録を消す。[id] が null なら全部。
   Future<void> clearHistory({String? id});
 
@@ -99,6 +102,9 @@ class LocalBotController implements BotController {
 
   @override
   Future<void> closePosition(String id) => _engine.closePositionManually(id);
+
+  @override
+  Future<void> refreshAccount() => _engine.refreshAccount();
 
   @override
   Future<void> clearHistory({String? id}) async =>

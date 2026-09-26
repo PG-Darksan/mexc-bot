@@ -229,13 +229,13 @@ class _OrderTile extends StatelessWidget {
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  _Tag(isShort ? 'Sell (ショート)' : 'Buy (ロング)', color: sideColor),
+                  _Tag(isShort ? '売り (ショート)' : '買い (ロング)', color: sideColor),
                   _Tag(
                     '${position.leverage}x',
                     color: theme.colorScheme.primary,
                   ),
                   _Tag(
-                    open ? 'オープン' : 'クローズ',
+                    open ? '保有中' : '決済済み',
                     color: open
                         ? theme.colorScheme.primary
                         : theme.colorScheme.outline,
@@ -247,12 +247,12 @@ class _OrderTile extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 4),
-        _Line('参入', formatTime(position.openedAt)),
-        _Line('参入価格', formatPrice(position.entryPrice)),
+        _Line('建てた時刻', formatTime(position.openedAt)),
+        _Line('建値', formatPrice(position.entryPrice)),
         _Line('数量', '${position.vol} 枚'),
-        _Line('TP', formatPrice(position.takeProfitPrice)),
+        _Line('利確', formatPrice(position.takeProfitPrice)),
         if (position.stopLossPrice != null)
-          _Line('SL', formatPrice(position.stopLossPrice)),
+          _Line('損切り', formatPrice(position.stopLossPrice)),
         if (open && markPrice != null) _Line('現在値', formatPrice(markPrice)),
         if (open && pnl != null)
           _Line(
@@ -261,8 +261,8 @@ class _OrderTile extends StatelessWidget {
             color: pnl! >= 0 ? Colors.green : Colors.red,
           ),
         if (!open) ...[
-          _Line('決済', formatTime(position.closedAt)),
-          _Line('決済価格', formatPrice(position.closePrice)),
+          _Line('決済した時刻', formatTime(position.closedAt)),
+          _Line('決済した値段', formatPrice(position.closePrice)),
           _Line(
             '損益',
             formatPnl(position.realizedPnl),

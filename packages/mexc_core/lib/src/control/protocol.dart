@@ -24,6 +24,7 @@ class ClientCommandType {
   static const String closePosition = 'closePosition';
   static const String updatePositionExit = 'updatePositionExit';
   static const String clearHistory = 'clearHistory';
+  static const String refreshAccount = 'refreshAccount';
   static const String requestSnapshot = 'requestSnapshot';
   static const String requestHistory = 'requestHistory';
 }

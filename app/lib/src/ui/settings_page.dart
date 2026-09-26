@@ -173,7 +173,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         _updateLong((x) => x.copyWith(rsiThreshold: v)),
                   ),
                   _PairField(
-                    title: 'σ倍率 (エントリー)',
+                    title: 'σ倍率 (ボリンジャーバンドの幅)',
                     shortValue: draft.short.bbSigma,
                     longValue: draft.long.bbSigma,
                     onShortChanged: (v) =>
@@ -220,7 +220,10 @@ class _SettingsPageState extends State<SettingsPage> {
                     onLongChanged: (v) =>
                         _updateLong((x) => x.copyWith(takeProfitFactor: v)),
                   ),
-                  const _Hint('0.5 = 乖離の半分まで戻ったら利確。0 より大きく 1 未満。'),
+                  const _Hint(
+                    '0.5 なら、行きすぎた分の半分まで戻ったところで利確します。'
+                    '0 より大きく 1 未満で入れてください。',
+                  ),
                   _PairField(
                     title: '利確幅の下限 [%]',
                     shortValue: draft.short.minTakeProfitPercent,
