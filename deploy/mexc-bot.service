@@ -1,7 +1,7 @@
 [Unit]
 Description=MEXC futures trading bot
 Documentation=https://github.com/
-After=network-online.target
+After=network-online.target tailscaled.service
 Wants=network-online.target
 
 [Service]

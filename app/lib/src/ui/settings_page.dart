@@ -644,7 +644,10 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   const _Hint(
                     'IPホワイトリストを設定しないキーは90日で失効します。'
-                    '先物の発注権限とKYCが必要です。',
+                    '先物の発注権限とKYCが必要です。\n'
+                    'サーバー接続のときも、ここに入れた鍵で残高だけは端末が'
+                    '直接取ります (サーバーを経由するより速い)。'
+                    '注文はサーバー側の鍵で出します。',
                   ),
                   Align(
                     alignment: Alignment.centerRight,

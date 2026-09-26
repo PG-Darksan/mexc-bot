@@ -4,31 +4,21 @@ import 'package:mexc_core/mexc_core.dart';
 import '../app.dart';
 import 'format.dart';
 
-class DashboardPage extends StatelessWidget {
-  const DashboardPage({super.key});
+/// 口座の残高。ホームのいちばん上に置く。
+class AccountSection extends StatelessWidget {
+  const AccountSection({super.key});
 
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
     final snapshot = state.snapshot;
-    final config = snapshot.config;
-
     final asset = state.displayAsset;
-    final hasKey = state.isLocalMode
-        ? !state.credentials.isEmpty
-        : snapshot.credentialsConfigured;
+    // 端末に鍵があれば直接取れる。無ければサーバーが持っているかで判断する。
+    final hasKey = !state.credentials.isEmpty || snapshot.credentialsConfigured;
 
-    final closed = snapshot.closedPositions;
-    final wins = closed.where((p) => (p.realizedPnl ?? 0) > 0).length;
-    final totalPnl = closed.fold<double>(
-      0,
-      (sum, p) => sum + (p.realizedPnl ?? 0),
-    );
-
-    return ListView(
-      padding: const EdgeInsets.all(16),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // ── 口座 ──
         Row(
           children: [
             Expanded(child: _SectionTitle('口座')),
@@ -70,8 +60,31 @@ class DashboardPage extends StatelessWidget {
         ),
         if (state.assetFetchedAt != null)
           _Note('取得時刻: ${formatTime(state.assetFetchedAt)}'),
-        const SizedBox(height: 24),
+      ],
+    );
+  }
+}
 
+/// 成績・稼働状況・売買の条件・最近の検知。ホームのチャートの下に置く。
+class StatusSections extends StatelessWidget {
+  const StatusSections({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppScope.of(context);
+    final snapshot = state.snapshot;
+    final config = snapshot.config;
+
+    final closed = snapshot.closedPositions;
+    final wins = closed.where((p) => (p.realizedPnl ?? 0) > 0).length;
+    final totalPnl = closed.fold<double>(
+      0,
+      (sum, p) => sum + (p.realizedPnl ?? 0),
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
         // ── 成績 ──
         _SectionTitle('成績 (記録 ${closed.length} 件)'),
         _StatGrid(
@@ -99,6 +112,19 @@ class DashboardPage extends StatelessWidget {
         _SectionTitle('稼働状況'),
         _StatGrid(
           items: [
+            if (!state.isLocalMode)
+              _Stat(
+                'サーバー',
+                switch (state.connection) {
+                  ControllerConnection.connected => '接続中',
+                  ControllerConnection.connecting => '接続処理中',
+                  ControllerConnection.error => '接続エラー',
+                  ControllerConnection.disconnected => '未接続',
+                },
+                color: state.connection == ControllerConnection.connected
+                    ? Colors.green
+                    : Colors.red,
+              ),
             _Stat(
               '状態',
               snapshot.running ? '稼働中' : '停止中',

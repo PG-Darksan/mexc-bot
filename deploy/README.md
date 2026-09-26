@@ -328,9 +328,38 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ## 手順10: アプリから繋ぐ
 
 1. 設定タブ → 動かし方 → **サーバー接続**
-2. サーバーのURL: `ws://100.x.y.z:8080/ws` (Tailscale のIP)
-3. 接続トークン: `setup.sh` が表示した値
+2. サーバーのURL: `ws://100.x.y.z:8080/ws` (Tailscale のIP。`setup.sh` の最後にも出ます)
+3. 接続トークン: `setup.sh` が表示した値 (`sudo grep BOT_TOKEN /etc/mexc-bot/env` で見返せます)
 4. 保存 → 右上の **開始**
+
+残高を端末で直接見たいときは、アプリ側にも MEXC のAPIキーを入れてください。
+注文はサーバー側の鍵で出し、端末の鍵は残高の取得にだけ使います。
+
+`setup.sh` は Tailscale が入っていればそのアドレスで待ち受けるように
+systemd を書きます。**先に Tailscale (手順8) を済ませてから `setup.sh` を
+流してください。** 順番が逆だと `127.0.0.1` だけで待つ形になり、アプリから
+繋がりません。その場合は `sudo bash deploy/setup.sh` をもう一度流すか、
+`/etc/systemd/system/mexc-bot.service` の `--host` を Tailscale のIPに
+書き換えて `sudo systemctl daemon-reload && sudo systemctl restart mexc-bot`
+としてください。
+
+## ConoHa VPS の場合
+
+手順は Oracle と同じで、違うのは次の点だけです。
+
+| 項目 | 値 |
+| --- | --- |
+| OS | Ubuntu 24.04 (22.04 でも可) |
+| プラン | メモリ 1GB 以上 (512MB だとビルドが落ちます。1GB なら上の swap を作ってください) |
+| SSH のユーザー | `root` (Oracle の `ubuntu` ではありません。`scp` と `ssh` の宛先を `root@<IP>` にします) |
+| セキュリティグループ | **既定のままで構いません。** Tailscale は外向きの通信で繋がるので、8080 を開ける必要はありません。SSH (22) だけ通れば足ります |
+| サーバーのURL | `ws://<tailscale ip -4 の値>:8080/ws` |
+| 接続トークン | `sudo grep BOT_TOKEN /etc/mexc-bot/env` の値 |
+| 自己署名証明書を許可 | オフ (`ws://` なので関係ありません) |
+
+ConoHa の公開IPをそのままアプリに入れても繋がりません。ボットは Tailscale の
+アドレスでしか待ち受けていないためです (公開IPで待たせると、誰でも叩ける
+状態になるので避けています)。
 
 ---
 

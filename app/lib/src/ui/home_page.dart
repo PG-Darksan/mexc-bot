@@ -5,7 +5,6 @@ import '../app.dart';
 import '../settings/app_settings.dart';
 import '../settings/app_settings.dart';
 import 'chart_page.dart';
-import 'dashboard_page.dart';
 import 'orders_page.dart';
 import 'settings_page.dart';
 
@@ -19,17 +18,9 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _index = 0;
 
+  // 残高とチャートは同じタブにまとめてある。
   static const _destinations = [
-    (
-      icon: Icons.candlestick_chart_outlined,
-      selected: Icons.candlestick_chart,
-      label: 'チャート',
-    ),
-    (
-      icon: Icons.account_balance_wallet_outlined,
-      selected: Icons.account_balance_wallet,
-      label: '残高',
-    ),
+    (icon: Icons.home_outlined, selected: Icons.home, label: 'ホーム'),
     (
       icon: Icons.receipt_long_outlined,
       selected: Icons.receipt_long,
@@ -45,24 +36,16 @@ class _HomePageState extends State<HomePage> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    final pages = const [
-      ChartPage(),
-      DashboardPage(),
-      OrdersPage(),
-      SettingsPage(),
-    ];
+    final pages = const [ChartPage(), OrdersPage(), SettingsPage()];
 
-    final width = MediaQuery.sizeOf(context).width;
-    final wide = width >= 900;
-    // 横に並べると「開始」ボタンに重なる幅では、状態チップを2段目へ落とす。
-    final compactHeader = width < 620;
+    final wide = MediaQuery.sizeOf(context).width >= 900;
 
     // IndexedStack にして、タブを移ってもそれぞれの画面の状態を保つ。
     // 設定タブで触りかけの内容が、行き来で消えないようにするため。
     final body = IndexedStack(index: _index, children: pages);
 
     return Scaffold(
-      appBar: _TopBar(compact: compactHeader),
+      appBar: const _TopBar(),
       body: Column(
         children: [
           const _NoticeBar(),
@@ -111,70 +94,16 @@ class _HomePageState extends State<HomePage> {
 }
 
 class _TopBar extends StatelessWidget implements PreferredSizeWidget {
-  const _TopBar({required this.compact});
-
-  /// 画面が狭く、状態チップをタイトルの下の段に置くか。
-  final bool compact;
-
-  static const double _barHeight = 56;
-  static const double _chipRowHeight = 40;
+  const _TopBar();
 
   @override
-  Size get preferredSize =>
-      Size.fromHeight(compact ? _barHeight + _chipRowHeight : _barHeight);
+  Size get preferredSize => const Size.fromHeight(56);
 
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
     final snapshot = state.snapshot;
     final theme = Theme.of(context);
-
-    final chips = <Widget>[
-      _Chip(
-        label: state.isLocalMode ? 'ローカル実行' : 'サーバー接続',
-        icon: state.isLocalMode ? Icons.computer : Icons.cloud_outlined,
-        color: theme.colorScheme.primary,
-      ),
-      if (!state.isLocalMode)
-        _Chip(
-          label: switch (state.connection) {
-            ControllerConnection.connected => '接続中',
-            ControllerConnection.connecting => '接続処理中',
-            ControllerConnection.error => '接続エラー',
-            ControllerConnection.disconnected => '未接続',
-          },
-          icon: state.connection == ControllerConnection.connected
-              ? Icons.link
-              : Icons.link_off,
-          color: state.connection == ControllerConnection.connected
-              ? Colors.green
-              : theme.colorScheme.error,
-        ),
-      for (final side in snapshot.config.enabledSides)
-        _Chip(
-          label: side.direction.label,
-          icon: side.direction.isShort
-              ? Icons.trending_down
-              : Icons.trending_up,
-          color: side.direction.isShort ? Colors.redAccent : Colors.green,
-        ),
-    ];
-
-    // 方向を両方入れるとチップが増える。入りきらないぶんは横に流して、
-    // 「開始」ボタンの下へ潜り込まないようにする。
-    Widget chipRow(EdgeInsets padding) => SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      padding: padding,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (var i = 0; i < chips.length; i++) ...[
-            if (i > 0) const SizedBox(width: 8),
-            chips[i],
-          ],
-        ],
-      ),
-    );
 
     final brightnessButton = IconButton(
       tooltip: '明るさを切り替える',
@@ -208,33 +137,9 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
       ),
     );
 
-    if (compact) {
-      return AppBar(
-        title: const Text('MEXC 自動売買', overflow: TextOverflow.ellipsis),
-        actions: [brightnessButton, startButton],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(_chipRowHeight),
-          child: SizedBox(
-            height: _chipRowHeight,
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: chipRow(const EdgeInsets.fromLTRB(16, 0, 16, 8)),
-            ),
-          ),
-        ),
-      );
-    }
-
+    // 動かし方や接続の状態はホームの「稼働状況」に出す。ここには置かない。
     return AppBar(
-      title: Row(
-        children: [
-          const Flexible(
-            child: Text('MEXC 自動売買', overflow: TextOverflow.ellipsis),
-          ),
-          const SizedBox(width: 16),
-          Expanded(child: chipRow(EdgeInsets.zero)),
-        ],
-      ),
+      title: const Text('MEXC 自動売買', overflow: TextOverflow.ellipsis),
       actions: [brightnessButton, startButton],
     );
   }
@@ -252,6 +157,9 @@ class _NoticeBar extends StatelessWidget {
         'さっきのエラー: ${state.snapshot.lastError}',
       if (state.isLocalMode && state.credentials.isEmpty)
         'APIキーが未設定です。注文を出すには設定タブで登録してください。',
+      if (!state.isLocalMode && state.connection == ControllerConnection.error)
+        'サーバーに繋がりません。設定タブのURLと接続トークン、'
+            'サーバーが動いているかを確認してください。',
     ];
     if (messages.isEmpty) return const SizedBox.shrink();
 
@@ -280,41 +188,6 @@ class _NoticeBar extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _Chip extends StatelessWidget {
-  const _Chip({required this.label, required this.icon, required this.color});
-
-  final String label;
-  final IconData icon;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withValues(alpha: 0.5)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: color),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              color: color,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
       ),
     );
   }

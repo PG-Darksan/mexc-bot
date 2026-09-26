@@ -189,7 +189,8 @@ class AppState extends ChangeNotifier {
     _liveAsset = null;
     _assetFetchedAt = null;
     _assetError = null;
-    if (isLocalMode && !_credentials.isEmpty) {
+    // サーバー接続でも、端末に鍵があれば残高だけは直接取れる (そのほうが速い)。
+    if (!_credentials.isEmpty) {
       _account = AccountDataSource(
         apiKey: _credentials.apiKey,
         apiSecret: _credentials.apiSecret,
@@ -248,8 +249,12 @@ class AppState extends ChangeNotifier {
     }
     notifyListeners();
     // ローカル実行では APIキーをエンジンに渡し直す必要がある。
+    // サーバー接続では、残高を直接取る口だけ作り直す。
     if (_settings.mode == RunMode.local) {
       await _rebuildController();
+    } else {
+      _rebuildAccountSource();
+      notifyListeners();
     }
     // キーを入れたら、止まっていてもすぐ残高を見に行く。
     if (credentials.apiKey.isNotEmpty && credentials.apiSecret.isNotEmpty) {
@@ -263,6 +268,9 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     if (_settings.mode == RunMode.local) {
       await _rebuildController();
+    } else {
+      _rebuildAccountSource();
+      notifyListeners();
     }
   }
 

@@ -3,6 +3,7 @@ import 'package:mexc_core/mexc_core.dart';
 
 import '../app.dart';
 import '../data/chart_data.dart';
+import 'dashboard_page.dart';
 import 'format.dart';
 import 'price_chart.dart';
 
@@ -169,6 +170,8 @@ class _ChartPageState extends State<ChartPage> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
       children: [
+        const AccountSection(),
+        const SizedBox(height: 20),
         _SymbolSearch(
           symbols: _allSymbols,
           onSelected: (s) {
@@ -237,6 +240,8 @@ class _ChartPageState extends State<ChartPage> {
           error: _indexError,
           onRefresh: _loadIndex,
         ),
+        const SizedBox(height: 24),
+        const StatusSections(),
       ],
     );
   }
