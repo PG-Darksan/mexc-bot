@@ -13,6 +13,11 @@ class DashboardPage extends StatelessWidget {
     final snapshot = state.snapshot;
     final config = snapshot.config;
 
+    final asset = state.displayAsset;
+    final hasKey = state.isLocalMode
+        ? !state.credentials.isEmpty
+        : snapshot.credentialsConfigured;
+
     final closed = snapshot.closedPositions;
     final wins = closed.where((p) => (p.realizedPnl ?? 0) > 0).length;
     final totalPnl = closed.fold<double>(
@@ -23,98 +28,109 @@ class DashboardPage extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        // ── 口座 ──
         Row(
           children: [
             Expanded(child: _SectionTitle('口座')),
             FilledButton.tonalIcon(
-              onPressed: state.refreshAccount,
-              icon: const Icon(Icons.refresh, size: 16),
+              onPressed: state.refreshingAsset ? null : state.refreshAccount,
+              icon: state.refreshingAsset
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh, size: 16),
               label: const Text('更新'),
             ),
           ],
         ),
-        if (!snapshot.credentialsConfigured)
-          const _Note('APIキーを入れると、口座の中身が出ます (設定タブ)。')
-        else if (snapshot.asset == null)
-          const _Note('「更新」を押すと、いまの残高を取りに行きます。'),
+        if (!hasKey)
+          const _Note('APIキーを設定すると残高が表示されます (設定タブ)。')
+        else if (state.assetError != null)
+          _Note('取得できませんでした: ${state.assetError}')
+        else if (asset == null)
+          const _Note('「更新」を押すと残高を取得します。'),
         _StatGrid(
           items: [
             _Stat(
-              '使えるお金',
-              snapshot.asset == null
-                  ? '-'
-                  : '${snapshot.asset!.availableBalance.toStringAsFixed(2)} USDT',
+              '利用可能なUSDT',
+              asset == null ? '-' : asset.availableBalance.toStringAsFixed(2),
             ),
             _Stat(
-              '建玉に使っている分',
-              snapshot.asset == null
-                  ? '-'
-                  : '${snapshot.asset!.positionMargin.toStringAsFixed(2)} USDT',
+              '建玉に使っているUSDT',
+              asset == null ? '-' : asset.positionMargin.toStringAsFixed(2),
             ),
             _Stat(
-              'いまの含み損益',
-              snapshot.asset == null
-                  ? '-'
-                  : formatPnl(snapshot.asset!.unrealized),
-              color: (snapshot.asset?.unrealized ?? 0) >= 0
-                  ? Colors.green
-                  : Colors.red,
+              '現在の含み損益',
+              asset == null ? '-' : formatPnl(asset.unrealized),
+              color: (asset?.unrealized ?? 0) >= 0 ? Colors.green : Colors.red,
             ),
-            _Stat('持っている建玉', '${snapshot.positions.length} 件'),
-            _Stat('決済した回数', '${closed.length} 回'),
+          ],
+        ),
+        if (state.assetFetchedAt != null)
+          _Note('取得時刻: ${formatTime(state.assetFetchedAt)}'),
+        const SizedBox(height: 24),
+
+        // ── 成績 ──
+        _SectionTitle('成績 (記録 ${closed.length} 件)'),
+        _StatGrid(
+          items: [
+            _Stat('決済回数', '${closed.length} 回'),
             _Stat(
-              'これまでの損益',
+              '累計損益',
               formatPnl(totalPnl),
               color: totalPnl >= 0 ? Colors.green : Colors.red,
             ),
             if (closed.isNotEmpty)
               _Stat(
-                '勝った割合',
+                '勝率',
                 '${(wins / closed.length * 100).toStringAsFixed(1)}%',
               ),
           ],
         ),
+        const _Note(
+          'この端末に記録が残っている決済の集計です。'
+          '履歴タブで消した分は含みません。',
+        ),
         const SizedBox(height: 24),
-        _SectionTitle('いまの様子'),
+
+        // ── 稼働状況 ──
+        _SectionTitle('稼働状況'),
         _StatGrid(
           items: [
             _Stat(
-              'ボット',
-              snapshot.running ? '動いています' : '止まっています',
+              '状態',
+              snapshot.running ? '稼働中' : '停止中',
               color: snapshot.running ? Colors.green : Colors.grey,
             ),
             _Stat(
-              '値動きの受信',
-              snapshot.wsConnected ? 'つながっています' : '切れています',
+              '相場の受信',
+              snapshot.wsConnected ? '接続中' : '未接続',
               color: snapshot.wsConnected ? Colors.green : Colors.orange,
             ),
-            _Stat('見ている銘柄', '${snapshot.watchedSymbolCount} 銘柄'),
-            _Stat('見ている足', '${snapshot.subscriptionCount} 本'),
-            if (snapshot.pendingHistoryCount > 0)
-              _Stat(
-                '読み込み待ち',
-                '残り ${snapshot.pendingHistoryCount} 本',
-                color: Colors.orange,
-              ),
+            _Stat('監視銘柄', '${snapshot.watchedSymbolCount} 銘柄'),
             _Stat('前回の判定', formatTimeShort(snapshot.lastCycleAt)),
             _Stat(
-              '1回にかかった時間',
+              '判定にかかった時間',
               snapshot.lastCycleDurationMs == null
                   ? '-'
                   : '${(snapshot.lastCycleDurationMs! / 1000).toStringAsFixed(1)} 秒',
             ),
+            if (snapshot.pendingHistoryCount > 0)
+              _Stat(
+                '履歴の読み込み',
+                '残り ${snapshot.pendingHistoryCount}',
+                color: Colors.orange,
+              ),
           ],
         ),
         _Note(
-          '「見ている足」は 銘柄 × 時間軸 の本数です '
-          '(100銘柄 × 4時間軸なら 400 本)。\n'
-          '「1回にかかった時間」は、その全部を1周して調べ、建玉を取引所と'
-          '突き合わせるまでの時間です。'
-          '判定の間隔 (${config.evaluationIntervalSeconds} 秒) より短ければ'
-          '追いついています。',
+          '判定は ${config.evaluationIntervalSeconds} 秒ごとです。'
+          'かかった時間がこれより短ければ追いついています。',
         ),
         const SizedBox(height: 24),
-        _SectionTitle('いまの条件'),
+        _SectionTitle('売買の条件'),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),

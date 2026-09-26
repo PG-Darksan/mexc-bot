@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:mexc_core/mexc_core.dart';
 
+import '../data/account_data.dart';
 import '../settings/app_settings.dart';
 import '../settings/settings_store.dart';
 
@@ -30,6 +31,13 @@ class AppState extends ChangeNotifier {
   StreamSubscription<ControllerConnection>? _connectionSub;
   Timer? _persistTimer;
 
+  /// 残高だけを端末から直接取る口。ローカル実行で鍵があるときだけ持つ。
+  AccountDataSource? _account;
+  AccountAsset? _liveAsset;
+  DateTime? _assetFetchedAt;
+  String? _assetError;
+  bool _refreshingAsset = false;
+
   static const int maxEvents = 500;
 
   AppSettings get settings => _settings;
@@ -42,6 +50,12 @@ class AppState extends ChangeNotifier {
   bool get isLocalMode => _settings.mode == RunMode.local;
   bool get isRunning => _snapshot.running;
   String? get notice => _notice ?? _store.secureStorageError;
+
+  /// 画面に出す残高。端末で直接取ったものがあればそれを優先する。
+  AccountAsset? get displayAsset => _liveAsset ?? _snapshot.asset;
+  DateTime? get assetFetchedAt => _assetFetchedAt;
+  String? get assetError => _assetError;
+  bool get refreshingAsset => _refreshingAsset;
 
   Future<void> initialize() async {
     _settings = await _store.loadAppSettings();
@@ -82,8 +96,9 @@ class AppState extends ChangeNotifier {
       final local = LocalBotController(
         config: _config,
         apiKey: _credentials.apiKey.isEmpty ? null : _credentials.apiKey,
-        apiSecret:
-            _credentials.apiSecret.isEmpty ? null : _credentials.apiSecret,
+        apiSecret: _credentials.apiSecret.isEmpty
+            ? null
+            : _credentials.apiSecret,
       );
       local.restorePositions(await _store.loadPositions());
       controller = local;
@@ -97,6 +112,7 @@ class AppState extends ChangeNotifier {
     }
 
     _controller = controller;
+    _rebuildAccountSource();
     _snapshotSub = controller.snapshots.listen((s) {
       _snapshot = s;
       // サーバー側の設定を正とする。
@@ -139,8 +155,46 @@ class AppState extends ChangeNotifier {
   }
 
   /// 口座と建玉を取り直す。止まっていても使える。
+  ///
+  /// ローカル実行なら残高は端末が直接取る (待ち行列が別なので速い)。
+  /// 建玉の突き合わせは裏でエンジンに頼む。サーバー接続では鍵が端末に
+  /// 無いので、サーバーに頼むしかない。
   Future<void> refreshAccount() async {
-    await _controller?.refreshAccount();
+    final account = _account;
+    if (account == null) {
+      await _controller?.refreshAccount();
+      return;
+    }
+    if (_refreshingAsset) return;
+    _refreshingAsset = true;
+    _assetError = null;
+    notifyListeners();
+    try {
+      _liveAsset = await account.fetchUsdt();
+      _assetFetchedAt = DateTime.now();
+    } catch (e) {
+      _assetError = '$e';
+    } finally {
+      _refreshingAsset = false;
+      notifyListeners();
+    }
+    final controller = _controller;
+    if (controller != null) unawaited(controller.refreshAccount());
+  }
+
+  /// 残高を直接取る口を、いまの動かし方と鍵に合わせて作り直す。
+  void _rebuildAccountSource() {
+    _account?.dispose();
+    _account = null;
+    _liveAsset = null;
+    _assetFetchedAt = null;
+    _assetError = null;
+    if (isLocalMode && !_credentials.isEmpty) {
+      _account = AccountDataSource(
+        apiKey: _credentials.apiKey,
+        apiSecret: _credentials.apiSecret,
+      );
+    }
   }
 
   /// 決済済みの記録を消す。[id] が null なら全部。
@@ -173,7 +227,8 @@ class AppState extends ChangeNotifier {
 
   Future<void> updateAppSettings(AppSettings settings) async {
     final modeChanged = settings.mode != _settings.mode;
-    final connectionChanged = settings.serverUrl != _settings.serverUrl ||
+    final connectionChanged =
+        settings.serverUrl != _settings.serverUrl ||
         settings.serverToken != _settings.serverToken ||
         settings.allowSelfSignedCertificate !=
             _settings.allowSelfSignedCertificate;
@@ -235,6 +290,7 @@ class AppState extends ChangeNotifier {
 
   @override
   Future<void> dispose() async {
+    _account?.dispose();
     _persistTimer?.cancel();
     await _persistPositions();
     await _snapshotSub?.cancel();

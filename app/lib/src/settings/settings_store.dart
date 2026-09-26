@@ -113,8 +113,7 @@ class SettingsStore {
       secureStorageError = null;
       return Credentials(apiKey: key, apiSecret: secret);
     } catch (e) {
-      secureStorageError =
-          'APIキーの保管領域を開けませんでした ($e)。キーは今回の起動中だけ保持されます。';
+      secureStorageError = 'APIキーの保管領域を開けませんでした ($e)。キーは今回の起動中だけ保持されます。';
       return const Credentials();
     }
   }
