@@ -31,6 +31,12 @@ class AppState extends ChangeNotifier {
   StreamSubscription<ControllerConnection>? _connectionSub;
   Timer? _persistTimer;
 
+  /// 作り直しを 1 本に並べるための鎖。
+  ///
+  /// 設定を続けて変えると作り直しが重なり、古い口が新しい口の
+  /// 購読を上書きして「つないだのに未接続のまま」になる。順番に流す。
+  Future<void> _rebuildChain = Future<void>.value();
+
   /// 残高だけを端末から直接取る口。ローカル実行で鍵があるときだけ持つ。
   AccountDataSource? _account;
   AccountAsset? _liveAsset;
@@ -80,8 +86,32 @@ class AppState extends ChangeNotifier {
     });
   }
 
+  /// サーバー接続で、いまつながらない理由。分かっていなければ null。
+  String? get connectionError {
+    final controller = _controller;
+    return controller is RemoteBotController ? controller.lastError : null;
+  }
+
+  /// 設定を直さないとつながらない状態か (トークン違いなど)。
+  bool get connectionNeedsFix {
+    final controller = _controller;
+    return controller is RemoteBotController && controller.needsSettingsFix;
+  }
+
+  /// いまの設定でつなぎ直す。設定画面の「つなぎ直す」から呼ぶ。
+  Future<void> reconnect() => _rebuildController();
+
   /// 実行モードやAPIキーが変わったらコントローラを作り直す。
-  Future<void> _rebuildController() async {
+  ///
+  /// 重ねて呼ばれても順番に 1 つずつ実行する。
+  Future<void> _rebuildController() {
+    final next = _rebuildChain.then((_) => _doRebuildController());
+    // 失敗しても鎖は続ける (次の作り直しが止まらないように)。
+    _rebuildChain = next.catchError((Object _) {});
+    return next;
+  }
+
+  Future<void> _doRebuildController() async {
     await _snapshotSub?.cancel();
     await _eventSub?.cancel();
     await _connectionSub?.cancel();

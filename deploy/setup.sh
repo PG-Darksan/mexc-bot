@@ -72,16 +72,18 @@ EOF
 fi
 
 echo "==> systemd に登録する"
-# Tailscale が入っていればそのアドレスで待ち受ける。外の回線には出ない。
-# 無ければ Caddy などを前に置く前提で、自分の中 (127.0.0.1) だけで待つ。
-BIND_HOST=127.0.0.1
+# 自分の中 (127.0.0.1) は常に開けておく。Caddy を前に置く構成と、
+# health / status.dart の確認がこれで通る。
+# Tailscale が入っていれば、そのアドレスも足す (外の回線には出ない)。
+BIND_HOSTS=127.0.0.1
+TS_IP=""
 if command -v tailscale >/dev/null 2>&1; then
   TS_IP=$(tailscale ip -4 2>/dev/null | head -n1 || true)
   if [[ -n "${TS_IP:-}" ]]; then
-    BIND_HOST="$TS_IP"
+    BIND_HOSTS="127.0.0.1,$TS_IP"
   fi
 fi
-sed "s/--host 127.0.0.1/--host $BIND_HOST/" "$SRC_DIR/deploy/mexc-bot.service" \
+sed "s/--host 127.0.0.1/--host $BIND_HOSTS/" "$SRC_DIR/deploy/mexc-bot.service" \
   > /etc/systemd/system/mexc-bot.service
 systemctl daemon-reload
 systemctl enable mexc-bot
@@ -103,10 +105,16 @@ echo
 echo "完了しました。"
 echo "  状態確認: systemctl status mexc-bot"
 echo "  ログ:     tail -f $LOG_DIR/server.log"
-echo "  疎通:     curl http://$BIND_HOST:8080/health"
+echo "  疎通:     curl http://127.0.0.1:8080/health"
 echo
 echo "  アプリの「サーバーのURL」には次を入れてください:"
-echo "    ws://$BIND_HOST:8080/ws"
+if [[ -n "${TS_IP:-}" ]]; then
+  echo "    ws://$TS_IP:8080/ws   (Tailscale。手元のPCも同じ tailnet に入れる)"
+else
+  echo "    ws://<このサーバーのアドレス>:8080/ws"
+  echo "    ※ いまは 127.0.0.1 だけで待っています。外から繋ぐには Tailscale を"
+  echo "       入れてこの setup.sh をもう一度流すか、Caddy を前に置いてください。"
+fi
 echo "  接続トークンは: grep BOT_TOKEN $ENV_DIR/env"
 echo
 echo "このあと deploy/README.md の「外から繋げるようにする」を読んでください。"

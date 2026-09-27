@@ -20,7 +20,12 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 Future<void> main(List<String> args) async {
   final parser = ArgParser()
     ..addOption('port', abbr: 'p', defaultsTo: '8080', help: '待ち受けポート')
-    ..addOption('host', defaultsTo: '0.0.0.0', help: '待ち受けアドレス')
+    ..addOption(
+      'host',
+      defaultsTo: '0.0.0.0',
+      help: '待ち受けアドレス。カンマ区切りで複数書ける '
+          '(例: 127.0.0.1,100.x.y.z → Caddy からも Tailscale からも繋がる)',
+    )
     ..addOption(
       'data-dir',
       defaultsTo: './data',
@@ -34,7 +39,9 @@ Future<void> main(List<String> args) async {
     return;
   }
 
-  final token = Platform.environment['BOT_TOKEN'];
+  // 前後の空白や改行が混ざっていると、アプリ側の値と食い違って
+  // 「トークンが違います」になる。読んだ時点で落としておく。
+  final token = Platform.environment['BOT_TOKEN']?.trim();
   if (token == null || token.isEmpty) {
     stderr.writeln(
       'BOT_TOKEN が設定されていません。アプリからの接続を認証できないので起動を中止します。',
@@ -63,10 +70,22 @@ Future<void> main(List<String> args) async {
   );
 
   final port = int.tryParse(opts['port'] as String) ?? 8080;
-  final host = opts['host'] as String;
-  await server.listen(host: host, port: port);
+  // 1 つの HttpServer は 1 つのアドレスにしか着けないので、
+  // 指定された数だけ立てる。Caddy 越し (127.0.0.1) と Tailscale の
+  // アドレスを同時に使えるようにするため。
+  final hosts = (opts['host'] as String)
+      .split(',')
+      .map((h) => h.trim())
+      .where((h) => h.isNotEmpty)
+      .toSet()
+      .toList();
+  if (hosts.isEmpty) hosts.add('0.0.0.0');
+  await server.listen(hosts: hosts, port: port);
 
-  _log('待ち受け開始: http://$host:$port  (WebSocket: /ws)');
+  _log(
+    '待ち受け開始: ${hosts.map((h) => 'http://$h:$port').join(' / ')}'
+    '  (WebSocket: /ws)',
+  );
   if (apiKey == null || apiSecret == null) {
     _log('警告: MEXC_API_KEY / MEXC_API_SECRET が未設定です。'
         '判定だけ行い、注文は出しません。');
@@ -112,14 +131,17 @@ class BotServer {
 
   final Set<_Client> _clients = {};
   final List<BotEvent> _recentEvents = [];
-  HttpServer? _httpServer;
+  final List<HttpServer> _httpServers = [];
   StreamSubscription<BotSnapshot>? _snapshotSub;
   StreamSubscription<BotEvent>? _eventSub;
   Timer? _saveTimer;
 
   static const int maxRecentEvents = 300;
 
-  Future<void> listen({required String host, required int port}) async {
+  Future<void> listen({
+    required List<String> hosts,
+    required int port,
+  }) async {
     _snapshotSub = engine.snapshots.listen(_broadcastSnapshot);
     _eventSub = engine.events.listen((event) {
       _recentEvents.add(event);
@@ -165,7 +187,9 @@ class BotServer {
         })
         .handler;
 
-    _httpServer = await shelf_io.serve(router, host, port);
+    for (final host in hosts) {
+      _httpServers.add(await shelf_io.serve(router, host, port));
+    }
   }
 
   void _handleConnection(WebSocketChannel channel) {
@@ -210,8 +234,15 @@ class BotServer {
     }
 
     if (!client.authenticated) {
-      if (message.type != ClientCommandType.auth ||
-          message.payload['token'] != token) {
+      final sent = (message.payload['token'] as String?)?.trim();
+      if (message.type != ClientCommandType.auth || sent != token) {
+        // どちらが悪いのか分かるように、長さだけ残す (値は書かない)。
+        _log(
+          message.type != ClientCommandType.auth
+              ? '認証より先に ${message.type} が来たので切りました'
+              : 'トークンが合わないので切りました '
+                  '(受け取り ${sent?.length ?? 0} 文字 / 期待 ${token.length} 文字)',
+        );
         client.send(
           const WireMessage(
             type: ServerMessageType.error,
@@ -366,7 +397,10 @@ class BotServer {
       client.close();
     }
     _clients.clear();
-    await _httpServer?.close(force: true);
+    for (final server in _httpServers) {
+      await server.close(force: true);
+    }
+    _httpServers.clear();
   }
 }
 

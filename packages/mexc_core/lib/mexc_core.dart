@@ -11,6 +11,7 @@ export 'src/api/rate_limiter.dart';
 export 'src/control/bot_controller.dart';
 export 'src/control/protocol.dart';
 export 'src/control/remote_bot_controller.dart';
+export 'src/control/server_check.dart';
 export 'src/engine/bot_engine.dart';
 export 'src/engine/market_data_feed.dart';
 export 'src/engine/strategy_evaluator.dart';

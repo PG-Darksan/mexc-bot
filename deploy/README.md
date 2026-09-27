@@ -335,13 +335,37 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 残高を端末で直接見たいときは、アプリ側にも MEXC のAPIキーを入れてください。
 注文はサーバー側の鍵で出し、端末の鍵は残高の取得にだけ使います。
 
-`setup.sh` は Tailscale が入っていればそのアドレスで待ち受けるように
-systemd を書きます。**先に Tailscale (手順8) を済ませてから `setup.sh` を
-流してください。** 順番が逆だと `127.0.0.1` だけで待つ形になり、アプリから
-繋がりません。その場合は `sudo bash deploy/setup.sh` をもう一度流すか、
-`/etc/systemd/system/mexc-bot.service` の `--host` を Tailscale のIPに
-書き換えて `sudo systemctl daemon-reload && sudo systemctl restart mexc-bot`
+`setup.sh` は `127.0.0.1` と、Tailscale が入っていればそのアドレスの
+**両方**で待ち受けるように systemd を書きます (`--host` はカンマ区切りで
+複数書けます)。`127.0.0.1` を常に開けてあるので、Caddy を前に置く構成でも
+`curl http://127.0.0.1:8080/health` でもそのまま確認できます。
+
+**先に Tailscale (手順8) を済ませてから `setup.sh` を流してください。**
+順番が逆だと `127.0.0.1` だけで待つ形になり、アプリからは繋がりません。
+その場合は `sudo bash deploy/setup.sh` をもう一度流すか、
+`/etc/systemd/system/mexc-bot.service` の `--host` を
+`127.0.0.1,<Tailscale のIP>` に書き換えて
+`sudo systemctl daemon-reload && sudo systemctl restart mexc-bot`
 としてください。
+
+### 繋がらないときの見分け方
+
+アプリの 設定タブ → 動かし方 → **「接続を試す」** を押すと、原因が
+1 行で出ます。
+
+| 出るもの | 意味 | 直し方 |
+| --- | --- | --- |
+| つながりました | URL もトークンも合っている | — |
+| トークンが違います | サーバーまでは届いている | `sudo grep BOT_TOKEN /etc/mexc-bot/env` の値を入れ直す |
+| 届きません / つなげません | そのアドレスに届いていない | サーバーが動いているか (`systemctl status mexc-bot`)、待ち受けアドレス (`--host`)、Tailscale に手元のPCも入っているか、ポートが開いているか |
+| 返事がありません | 別のサービスが同じポートで動いている | URL のポートとパス (`/ws`) を確かめる |
+
+URL は `ws://` か `wss://` で始め、最後に `/ws` を付けます。`http://` と
+書いた場合や `/ws` を忘れた場合、前後に空白や改行が入った場合は
+アプリ側で直してから繋ぎます。トークンも前後の空白を落として送ります。
+
+URL とトークンは**入れ終わってから「保存してつなぎ直す」を押してください**
+(1 文字ごとに繋ぎ直すと、途中のトークンで弾かれ続けます)。
 
 ## ConoHa VPS の場合
 

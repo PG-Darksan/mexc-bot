@@ -10,6 +10,7 @@ import '../models/bot_event.dart';
 import '../models/strategy_config.dart';
 import 'bot_controller.dart';
 import 'protocol.dart';
+import 'server_check.dart';
 
 /// Oracle Cloud などに常駐させたサーバーへつなぐ実装。
 ///
@@ -40,8 +41,26 @@ class RemoteBotController implements BotController {
   StreamSubscription<dynamic>? _sub;
   Timer? _reconnectTimer;
   Timer? _pingTimer;
+  Timer? _authTimer;
   int _attempt = 0;
   bool _disposed = false;
+
+  /// 認証が通ったか。hello が返ってきたら true。
+  bool _authenticated = false;
+
+  /// やり直しても直らない理由で止まったか (トークン違い・URL違い)。
+  ///
+  /// 同じ値で延々つなぎ直しても通らないので、設定を直して作り直される
+  /// まで待つ。
+  bool _fatal = false;
+
+  String? _lastError;
+
+  /// 直近のつながらない理由。null なら分かっていない。
+  String? get lastError => _lastError;
+
+  /// 設定を直さないと直らない状態か。
+  bool get needsSettingsFix => _fatal;
 
   BotSnapshot _snapshot;
   ControllerConnection _connection = ControllerConnection.disconnected;
@@ -73,9 +92,26 @@ class RemoteBotController implements BotController {
   @override
   Future<void> connect() async {
     if (_disposed) return;
+    _fatal = false;
+    _authenticated = false;
     _setConnection(ControllerConnection.connecting);
+
+    // URL は入れ間違いが多いので、直せる範囲は直してからつなぐ。
+    final uri = normalizeServerUrl(serverUrl);
+    if (uri == null) {
+      _giveUp(
+        'サーバーのURLが読めません: 「$serverUrl」 '
+        '例: ws://192.168.0.10:8080/ws  /  wss://自分の名前.duckdns.org/ws',
+      );
+      return;
+    }
+    final authToken = token.trim();
+    if (authToken.isEmpty) {
+      _giveUp('接続トークンが空です。サーバーの BOT_TOKEN と同じ値を入れてください。');
+      return;
+    }
+
     try {
-      final uri = Uri.parse(serverUrl);
       WebSocketChannel channel;
       if (allowSelfSignedCertificate) {
         // WebSocketChannel.connect は HttpClient を差し込めないので
@@ -92,18 +128,21 @@ class RemoteBotController implements BotController {
         await channel.ready;
       }
       _channel = channel;
-      _attempt = 0;
 
       _sub = channel.stream.listen(
         _onMessage,
-        onError: (Object e) => _scheduleReconnect('通信エラー: $e'),
-        onDone: () => _scheduleReconnect('サーバーとの接続が切れました'),
+        onError: (Object e) => _scheduleReconnect('通信エラー: ${_shortReason(e)}'),
+        onDone: () => _scheduleReconnect(
+          _authenticated
+              ? 'サーバーとの接続が切れました'
+              : 'つないだ直後に切られました。接続トークンを確かめてください。',
+        ),
         cancelOnError: true,
       );
 
       _send(WireMessage(
         type: ClientCommandType.auth,
-        payload: {'token': token},
+        payload: {'token': authToken},
       ));
       _send(const WireMessage(type: ClientCommandType.requestSnapshot));
 
@@ -112,9 +151,18 @@ class RemoteBotController implements BotController {
         _send(const WireMessage(type: ClientCommandType.requestSnapshot));
       });
 
-      _setConnection(ControllerConnection.connected);
+      // 「つながった」と言うのは hello が返ってきてから。トークンが違えば
+      // サーバーは切ってくるので、勝手に成功にしない。
+      _authTimer?.cancel();
+      _authTimer = Timer(const Duration(seconds: 15), () {
+        if (_authenticated || _disposed) return;
+        _scheduleReconnect(
+          'サーバーから返事がありません。$uri が本当にこのボットのサーバーか'
+          '確かめてください。',
+        );
+      });
     } catch (e) {
-      _scheduleReconnect('接続できません: $e');
+      _scheduleReconnect('接続できません (${_shortReason(e)})');
     }
   }
 
@@ -150,7 +198,17 @@ class RemoteBotController implements BotController {
         if (!_eventController.isClosed) {
           _eventController.add(BotEvent.error('サーバー: $text'));
         }
+        // 認証前に返るエラーはトークン違い。つなぎ直しても通らない。
+        if (!_authenticated) {
+          _giveUp('サーバーに拒まれました: $text (接続トークンを確かめてください)');
+        }
       case ServerMessageType.hello:
+        // ここで初めて「つながった」と言える。
+        _authenticated = true;
+        _authTimer?.cancel();
+        _attempt = 0;
+        _lastError = null;
+        _setConnection(ControllerConnection.connected);
       case ServerMessageType.ack:
       default:
         break;
@@ -169,23 +227,47 @@ class RemoteBotController implements BotController {
 
   void _scheduleReconnect(String reason) {
     if (_disposed) return;
-    _pingTimer?.cancel();
-    _sub?.cancel();
-    _sub = null;
-    try {
-      _channel?.sink.close();
-    } catch (_) {}
-    _channel = null;
+    _closeSocket();
+    _lastError = reason;
     _setConnection(ControllerConnection.error);
     if (!_eventController.isClosed) {
       _eventController.add(BotEvent.warning(reason));
     }
+    // 直しようのない理由で止めたときは、つなぎ直さない。
+    if (_fatal) return;
 
     if (_reconnectTimer?.isActive ?? false) return;
     _attempt = math.min(_attempt + 1, 5);
     final delay = Duration(seconds: math.min(30, 1 << _attempt));
     _reconnectTimer = Timer(delay, connect);
   }
+
+  /// 設定を直すまでつなぎ直さない形で止める。
+  void _giveUp(String reason) {
+    _fatal = true;
+    _scheduleReconnect(reason);
+  }
+
+  void _closeSocket() {
+    _pingTimer?.cancel();
+    _authTimer?.cancel();
+    _authenticated = false;
+    _sub?.cancel();
+    _sub = null;
+    try {
+      _channel?.sink.close();
+    } catch (_) {}
+    _channel = null;
+  }
+
+  /// 例外から、画面に出して分かる短い理由を作る。
+  static String _shortReason(Object error) => switch (error) {
+    SocketException(:final osError, :final message) =>
+      osError?.message ?? (message.isEmpty ? '$error' : message),
+    WebSocketException(:final message) => message,
+    HandshakeException() => 'TLS の検証に失敗しました',
+    _ => '$error',
+  };
 
   void _setConnection(ControllerConnection state) {
     _connection = state;
@@ -259,6 +341,7 @@ class RemoteBotController implements BotController {
   Future<void> dispose() async {
     _disposed = true;
     _pingTimer?.cancel();
+    _authTimer?.cancel();
     _reconnectTimer?.cancel();
     await _sub?.cancel();
     try {
