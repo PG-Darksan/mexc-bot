@@ -163,23 +163,17 @@ class StatusSections extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 方向に依らない条件。
+                // 方向に依らない条件。出来高・時間軸・指標の期間は
+                // 方向ごとなので、下のショート / ロングの欄に出す。
                 Wrap(
                   spacing: 24,
                   runSpacing: 12,
                   children: [
                     _Condition(
-                      '24h出来高',
-                      '${formatUsdtCompact(config.minAmount24Usdt)} USDT 以上',
-                    ),
-                    _Condition(
-                      '時間軸',
-                      config.timeframes.map((t) => t.label).join(' / '),
-                    ),
-                    _Condition(
                       '判定間隔',
                       '${config.evaluationIntervalSeconds} 秒ごと',
                     ),
+                    const _Condition('エントリー', '成行 / 分離マージン'),
                     if (!config.fundingFilterEnabled)
                       const _Condition('資金調達', 'フィルタなし'),
                   ],
@@ -406,17 +400,25 @@ class _SideConditions extends StatelessWidget {
           runSpacing: 12,
           children: [
             _Condition(
-              'RSI(${config.rsiPeriod})',
+              '24h出来高',
+              '${formatUsdtCompact(side.minAmount24Usdt)} USDT 以上',
+            ),
+            _Condition(
+              '時間軸',
+              side.timeframes.map((t) => t.label).join(' / '),
+            ),
+            _Condition(
+              'RSI(${side.rsiPeriod})',
               '${side.rsiThreshold} ${isShort ? "以上" : "以下"}',
             ),
             _Condition(
-              'BB(${config.bbPeriod})',
+              'BB(${side.bbPeriod})',
               '${isShort ? "+" : "-"}${side.bbSigma}σ を'
                   '${isShort ? "上抜け" : "下抜け"}',
             ),
             _Condition(
               '利確',
-              'EMA(${config.emaPeriod})乖離 × ${side.takeProfitFactor}',
+              'EMA(${side.emaPeriod})乖離 × ${side.takeProfitFactor}',
             ),
             _Condition(
               '建玉',

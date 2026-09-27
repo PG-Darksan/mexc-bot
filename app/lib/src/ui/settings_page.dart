@@ -14,6 +14,7 @@ import 'home_page.dart' show RunModeLabel;
 ///
 /// 項目が多いので、よく触るものだけ開いた状態で畳んである。
 /// ショートとロングは同じ並びで左右に置き、値を見比べられるようにする。
+/// 出来高の下限・時間軸・指標の期間も方向ごとなので、いちばん上にある。
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
 
@@ -29,6 +30,10 @@ class _SettingsPageState extends State<SettingsPage> {
   final _serverUrlController = TextEditingController();
   final _serverTokenController = TextEditingController();
   bool _loadedOnce = false;
+
+  /// 「接続を試す」の結果。押すまでは null。
+  ServerCheckResult? _checkResult;
+  bool _checking = false;
 
   @override
   void didChangeDependencies() {
@@ -47,6 +52,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _apiSecretController.text = state.credentials.apiSecret;
       _serverUrlController.text = state.settings.serverUrl;
       _serverTokenController.text = state.settings.serverToken;
+      _checkResult = null;
     });
   }
 
@@ -71,9 +77,6 @@ class _SettingsPageState extends State<SettingsPage> {
   void _updateLong(SideConfig Function(SideConfig) change) =>
       _update((c) => c.withSide(change(c.long)));
 
-  void _updateApp(AppSettings Function(AppSettings) change) =>
-      setState(() => _appDraft = change(appDraft));
-
   /// 動かし方まわりは、切り替えたその場で覚える。
   ///
   /// タブを移ると画面が作り直されるので、保存しないと元に戻ってしまう。
@@ -91,6 +94,39 @@ class _SettingsPageState extends State<SettingsPage> {
     final next = change(appDraft);
     setState(() => _appDraft = next);
     unawaited(_persistAppSettings(next));
+  }
+
+  /// URL とトークンを保存して、つなぎ直す。
+  ///
+  /// 1 文字ごとに保存すると、そのたびに接続をやり直して中途半端な
+  /// トークンで弾かれ続ける。まとめて確定させるための口。
+  Future<void> _applyConnection() async {
+    final state = AppScope.of(context);
+    setState(() => _checkResult = null);
+    await _persistAppSettings(appDraft);
+    await state.reconnect();
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('接続設定を保存してつなぎ直しました')));
+  }
+
+  /// URL とトークンのどちらが悪いのかを切り分ける。
+  Future<void> _testConnection() async {
+    setState(() {
+      _checking = true;
+      _checkResult = null;
+    });
+    final result = await checkBotServer(
+      url: _serverUrlController.text,
+      token: _serverTokenController.text,
+      allowSelfSignedCertificate: appDraft.allowSelfSignedCertificate,
+    );
+    if (!mounted) return;
+    setState(() {
+      _checking = false;
+      _checkResult = result;
+    });
   }
 
   Future<void> _save() async {
@@ -136,7 +172,6 @@ class _SettingsPageState extends State<SettingsPage> {
       return const Center(child: CircularProgressIndicator());
     }
     final state = AppScope.of(context);
-    final limitOrder = draft.orderType == EntryOrderType.limit;
 
     return Column(
       children: [
@@ -148,7 +183,7 @@ class _SettingsPageState extends State<SettingsPage> {
               _Section(
                 title: 'ショートとロングの条件',
                 description:
-                    '同じ項目を左右に並べてあります。'
+                    '出来高・時間軸・指標の期間も向きごとに決められます。'
                     'RSI のしきい値だけ向きが逆 (既定 97 / 3) です。',
                 initiallyExpanded: true,
                 children: [
@@ -161,6 +196,77 @@ class _SettingsPageState extends State<SettingsPage> {
                     onLongChanged: (v) =>
                         _updateLong((x) => x.copyWith(enabled: v)),
                   ),
+                  _PairField(
+                    title: '監視する銘柄: 24h出来高の下限',
+                    shortSuffix: 'M USDT',
+                    longSuffix: 'M USDT',
+                    shortValue: draft.short.minAmount24Usdt / 1000000,
+                    longValue: draft.long.minAmount24Usdt / 1000000,
+                    onShortChanged: (v) => _updateShort(
+                      (x) => x.copyWith(minAmount24Usdt: v * 1000000),
+                    ),
+                    onLongChanged: (v) => _updateLong(
+                      (x) => x.copyWith(minAmount24Usdt: v * 1000000),
+                    ),
+                  ),
+                  const _Hint(
+                    '1 M = 100万 USDT。既定 5 M。\n'
+                    '見る銘柄はこの下限だけで決まります。銘柄数に上限は無く、'
+                    '手で選んだり外したりもしません。'
+                    'ショートとロングで違う値にすると、それぞれの下限で絞られます。',
+                  ),
+                  _PairTimeframes(
+                    shortValue: draft.short.timeframes,
+                    longValue: draft.long.timeframes,
+                    onShortChanged: (v) =>
+                        _updateShort((x) => x.copyWith(timeframes: v)),
+                    onLongChanged: (v) =>
+                        _updateLong((x) => x.copyWith(timeframes: v)),
+                  ),
+                  const _Hint('選んだ時間軸それぞれで独立に判定します。'),
+                  _PairField(
+                    title: 'BB期間',
+                    integer: true,
+                    shortValue: draft.short.bbPeriod.toDouble(),
+                    longValue: draft.long.bbPeriod.toDouble(),
+                    onShortChanged: (v) =>
+                        _updateShort((x) => x.copyWith(bbPeriod: v.toInt())),
+                    onLongChanged: (v) =>
+                        _updateLong((x) => x.copyWith(bbPeriod: v.toInt())),
+                  ),
+                  _PairField(
+                    title: 'RSI期間',
+                    integer: true,
+                    shortValue: draft.short.rsiPeriod.toDouble(),
+                    longValue: draft.long.rsiPeriod.toDouble(),
+                    onShortChanged: (v) =>
+                        _updateShort((x) => x.copyWith(rsiPeriod: v.toInt())),
+                    onLongChanged: (v) =>
+                        _updateLong((x) => x.copyWith(rsiPeriod: v.toInt())),
+                  ),
+                  _PairField(
+                    title: 'EMA期間 (利確の基準)',
+                    integer: true,
+                    shortValue: draft.short.emaPeriod.toDouble(),
+                    longValue: draft.long.emaPeriod.toDouble(),
+                    onShortChanged: (v) =>
+                        _updateShort((x) => x.copyWith(emaPeriod: v.toInt())),
+                    onLongChanged: (v) =>
+                        _updateLong((x) => x.copyWith(emaPeriod: v.toInt())),
+                  ),
+                  _PairField(
+                    title: '保持する足',
+                    integer: true,
+                    shortSuffix: '本',
+                    longSuffix: '本',
+                    shortValue: draft.short.historyBars.toDouble(),
+                    longValue: draft.long.historyBars.toDouble(),
+                    onShortChanged: (v) =>
+                        _updateShort((x) => x.copyWith(historyBars: v.toInt())),
+                    onLongChanged: (v) =>
+                        _updateLong((x) => x.copyWith(historyBars: v.toInt())),
+                  ),
+                  const _Hint('RSI は Wilder 平滑 (TradingView と同じ計算) です。'),
                   _PairField(
                     title: 'RSIのしきい値',
                     shortSuffix: '以上',
@@ -200,17 +306,6 @@ class _SettingsPageState extends State<SettingsPage> {
                     onLongChanged: (v) =>
                         _updateLong((x) => x.copyWith(marginPerTradeUsdt: v)),
                   ),
-                  if (limitOrder)
-                    _PairField(
-                      title: '指値を現在値から離す幅 [%]',
-                      shortValue: draft.short.limitOffsetPercent,
-                      longValue: draft.long.limitOffsetPercent,
-                      onShortChanged: (v) => _updateShort(
-                        (x) => x.copyWith(limitOffsetPercent: v),
-                      ),
-                      onLongChanged: (v) =>
-                          _updateLong((x) => x.copyWith(limitOffsetPercent: v)),
-                    ),
                   _PairField(
                     title: '利確の係数',
                     shortValue: draft.short.takeProfitFactor,
@@ -317,152 +412,19 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
 
               _Section(
-                title: '監視する銘柄',
-                children: [
-                  _NumberField(
-                    label: '24h出来高の下限',
-                    suffix: 'M USDT',
-                    value: draft.minAmount24Usdt / 1000000,
-                    onChanged: (v) => _update(
-                      (c) => c.copyWith(minAmount24Usdt: v * 1000000),
-                    ),
-                  ),
-                  const _Hint(
-                    '1 M = 100万 USDT。既定 5 M。\n'
-                    '監視する銘柄はこの下限だけで決まります。'
-                    '銘柄数に上限は無く、手で選んだり外したりもしません。',
-                  ),
-                ],
-              ),
-
-              _Section(
-                title: '判定に使う時間軸',
-                description: '選んだ時間軸それぞれで独立に判定します。',
-                children: [
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: [
-                      for (final tf in Timeframe.values)
-                        FilterChip(
-                          label: Text(
-                            tf.label,
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                          visualDensity: VisualDensity.compact,
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
-                          selected: draft.timeframes.contains(tf),
-                          onSelected: (selected) => _update((c) {
-                            final list = [...c.timeframes];
-                            if (selected) {
-                              list.add(tf);
-                              list.sort(
-                                (a, b) => a.seconds.compareTo(b.seconds),
-                              );
-                            } else {
-                              list.remove(tf);
-                            }
-                            return c.copyWith(timeframes: list);
-                          }),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-
-              _Section(
-                title: '指標の期間',
-                description: 'ショートとロングで共通です。',
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _NumberField(
-                          label: 'BB期間',
-                          value: draft.bbPeriod.toDouble(),
-                          integer: true,
-                          dense: true,
-                          onChanged: (v) =>
-                              _update((c) => c.copyWith(bbPeriod: v.toInt())),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _NumberField(
-                          label: 'RSI期間',
-                          value: draft.rsiPeriod.toDouble(),
-                          integer: true,
-                          dense: true,
-                          onChanged: (v) =>
-                              _update((c) => c.copyWith(rsiPeriod: v.toInt())),
-                        ),
-                      ),
-                    ],
-                  ),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _NumberField(
-                          label: 'EMA期間',
-                          value: draft.emaPeriod.toDouble(),
-                          integer: true,
-                          dense: true,
-                          onChanged: (v) =>
-                              _update((c) => c.copyWith(emaPeriod: v.toInt())),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _NumberField(
-                          label: '保持する足',
-                          suffix: '本',
-                          value: draft.historyBars.toDouble(),
-                          integer: true,
-                          dense: true,
-                          onChanged: (v) => _update(
-                            (c) => c.copyWith(historyBars: v.toInt()),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const _Hint('RSI は Wilder 平滑 (TradingView と同じ計算) です。'),
-                ],
-              ),
-
-              _Section(
                 title: 'エントリーの出し方',
-                description: 'レバレッジ・証拠金・指値の幅は方向ごとの設定にあります。',
+                description: '成行・分離マージンで固定です。',
                 children: [
-                  SegmentedButton<EntryOrderType>(
-                    segments: const [
-                      ButtonSegment(
-                        value: EntryOrderType.market,
-                        label: Text('成行', style: TextStyle(fontSize: 12)),
-                      ),
-                      ButtonSegment(
-                        value: EntryOrderType.limit,
-                        label: Text('指値', style: TextStyle(fontSize: 12)),
-                      ),
-                    ],
-                    selected: {draft.orderType},
-                    onSelectionChanged: (s) =>
-                        _update((c) => c.copyWith(orderType: s.first)),
-                  ),
                   const _Hint(
+                    '新規建ては成行だけです (指値は使いません)。'
+                    'マージンは分離マージンで固定です '
+                    '(損切りを置かないので、クロスは使いません)。\n'
+                    'レバレッジと証拠金は方向ごとの設定にあります。\n'
                     'このボットは一方向モードで動きます。'
                     '同じ銘柄に建玉があれば向きに関わらず新規を出さないので、'
-                    'ヘッジは使いません。\n'
+                    'ヘッジは使いません。'
                     'MEXC 側も「一方向モード」にしてください。'
                     '食い違うと決済注文が通らず、起動時に警告が出ます。',
-                  ),
-                  _CompactSwitch(
-                    label: '分離マージンを使う',
-                    subtitle: '切るとクロスマージン。損切りを置かないので分離を推奨。',
-                    value: draft.useIsolatedMargin,
-                    onChanged: (v) =>
-                        _update((c) => c.copyWith(useIsolatedMargin: v)),
                   ),
                 ],
               ),
@@ -550,6 +512,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 description:
                     '${appDraft.mode == RunMode.local ? "ローカル実行" : "サーバー接続"} '
                     '(切り替えるとすぐ保存されます)',
+                initiallyExpanded: appDraft.mode == RunMode.remote,
                 children: [
                   for (final mode in RunMode.values)
                     RadioListTile<RunMode>(
@@ -571,29 +534,76 @@ class _SettingsPageState extends State<SettingsPage> {
                     const SizedBox(height: 8),
                     TextField(
                       controller: _serverUrlController,
+                      autocorrect: false,
                       decoration: const InputDecoration(
                         labelText: 'サーバーのURL',
                         hintText: 'wss://example.duckdns.org/ws',
                         isDense: true,
                       ),
-                      onChanged: (_) =>
-                          unawaited(_persistAppSettings(appDraft)),
                     ),
                     const SizedBox(height: 8),
                     TextField(
                       controller: _serverTokenController,
                       obscureText: true,
+                      autocorrect: false,
+                      enableSuggestions: false,
                       decoration: const InputDecoration(
                         labelText: '接続トークン',
                         isDense: true,
                       ),
-                      onChanged: (_) =>
-                          unawaited(_persistAppSettings(appDraft)),
+                      onSubmitted: (_) => unawaited(_applyConnection()),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.tonalIcon(
+                            onPressed: () => unawaited(_applyConnection()),
+                            icon: const Icon(Icons.link, size: 16),
+                            label: const Text(
+                              '保存してつなぎ直す',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _checking
+                                ? null
+                                : () => unawaited(_testConnection()),
+                            icon: _checking
+                                ? const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.network_check, size: 16),
+                            label: const Text(
+                              '接続を試す',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    _ConnectionStatus(
+                      connection: state.connection,
+                      error: state.connectionError,
+                      check: _checkResult,
                     ),
                     const _Hint(
+                      'URL は ws:// か wss:// で始め、最後に /ws を付けます '
+                      '(例: ws://192.168.0.10:8080/ws)。'
+                      'http:// と書いた場合や /ws を省いた場合はこちらで直します。\n'
                       '接続トークンは、サーバーを立てたときに deploy/setup.sh が作る '
-                      'BOT_TOKEN と同じ値です (サーバーの /etc/mexc-bot/env に入っています)。\n'
-                      'サーバーをまだ立てていないなら、ローカル実行のままにしてください。',
+                      'BOT_TOKEN と同じ値です (サーバーの /etc/mexc-bot/env に'
+                      '入っています)。前後の空白や改行は取り除いて送ります。\n'
+                      'URL とトークンは入れ終わってから「保存してつなぎ直す」を'
+                      '押してください。サーバーをまだ立てていないなら、'
+                      'ローカル実行のままにしてください。',
                     ),
                     _CompactSwitch(
                       label: '自己署名証明書を許可する',
@@ -697,6 +707,83 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// いまの接続の様子と、「接続を試す」の結果を出す。
+class _ConnectionStatus extends StatelessWidget {
+  const _ConnectionStatus({
+    required this.connection,
+    required this.error,
+    required this.check,
+  });
+
+  final ControllerConnection connection;
+  final String? error;
+  final ServerCheckResult? check;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final (label, color) = switch (connection) {
+      ControllerConnection.connected => ('つながっています', Colors.green),
+      ControllerConnection.connecting => ('つなぎ中', Colors.orange),
+      ControllerConnection.error => ('つながっていません', theme.colorScheme.error),
+      ControllerConnection.disconnected => ('未接続', theme.colorScheme.outline),
+    };
+    final result = check;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.circle, size: 10, color: color),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+          if (connection == ControllerConnection.error && error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                error!,
+                style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
+              ),
+            ),
+          if (result != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    result.ok ? Icons.check_circle : Icons.error_outline,
+                    size: 14,
+                    color: result.ok ? Colors.green : theme.colorScheme.error,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      result.message,
+                      style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -814,6 +901,117 @@ class _PairSwitch extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 判定する時間軸を、ショートとロングの 2 列で選ばせる。
+///
+/// 1 行 1 時間軸の表にして、その場で見比べながら入れられるようにする。
+class _PairTimeframes extends StatelessWidget {
+  const _PairTimeframes({
+    required this.shortValue,
+    required this.longValue,
+    required this.onShortChanged,
+    required this.onLongChanged,
+  });
+
+  final List<Timeframe> shortValue;
+  final List<Timeframe> longValue;
+  final ValueChanged<List<Timeframe>> onShortChanged;
+  final ValueChanged<List<Timeframe>> onLongChanged;
+
+  static const double _columnWidth = 64;
+
+  /// [tf] を入れた / 外した新しい並びを返す。短い足から順に並べる。
+  static List<Timeframe> _toggled(
+    List<Timeframe> current,
+    Timeframe tf,
+    bool selected,
+  ) {
+    final list = [...current];
+    if (selected) {
+      if (!list.contains(tf)) list.add(tf);
+      list.sort((a, b) => a.seconds.compareTo(b.seconds));
+    } else {
+      list.remove(tf);
+    }
+    return list;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final headStyle = theme.textTheme.bodySmall?.copyWith(fontSize: 11);
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '判定に使う時間軸',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+          ),
+          Row(
+            children: [
+              const Expanded(child: SizedBox()),
+              SizedBox(
+                width: _columnWidth,
+                child: Text('ショート', style: headStyle, textAlign: TextAlign.center),
+              ),
+              SizedBox(
+                width: _columnWidth,
+                child: Text('ロング', style: headStyle, textAlign: TextAlign.center),
+              ),
+            ],
+          ),
+          for (final tf in Timeframe.values)
+            Row(
+              children: [
+                Expanded(
+                  child: Text(tf.label, style: const TextStyle(fontSize: 12)),
+                ),
+                _Cell(
+                  value: shortValue.contains(tf),
+                  onChanged: (v) =>
+                      onShortChanged(_toggled(shortValue, tf, v)),
+                ),
+                _Cell(
+                  value: longValue.contains(tf),
+                  onChanged: (v) => onLongChanged(_toggled(longValue, tf, v)),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 時間軸の表の中の、入れる / 外すを 1 つ選ぶところ。
+class _Cell extends StatelessWidget {
+  const _Cell({required this.value, required this.onChanged});
+
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: _PairTimeframes._columnWidth,
+      height: 30,
+      child: InkWell(
+        onTap: () => onChanged(!value),
+        child: Center(
+          child: Checkbox(
+            value: value,
+            onChanged: (v) => onChanged(v ?? false),
+            visualDensity: VisualDensity.compact,
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+        ),
       ),
     );
   }

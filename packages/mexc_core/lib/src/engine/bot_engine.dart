@@ -299,6 +299,8 @@ class BotEngine {
         final series = _feed.seriesOf(symbol, tf);
         if (series == null) continue;
         for (final side in sides) {
+          // 時間軸は方向ごとに選べる。その方向が見ない足は評価しない。
+          if (!side.timeframes.contains(tf)) continue;
           final evaluation = evaluator.evaluate(
             symbol: symbol,
             timeframe: tf,

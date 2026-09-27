@@ -11,6 +11,8 @@ import '../models/timeframe.dart';
 /// 通信も発注もしないので単体テストしやすい。進行中の足を含めた
 /// 終値の配列をそのまま受け取り、毎回すべて計算し直す。
 /// ショートとロングは条件が左右対称なので、同じ手順を方向で切り替えて使う。
+/// 出来高の下限・時間軸・指標の期間も方向ごとなので、判定はすべて
+/// [SideConfig] の値を見る。
 ///
 /// 入り方は 2 通りある。
 /// * 通常 … RSI がしきい値に届き、かつ σ のバンドを抜けたとき。
@@ -21,16 +23,9 @@ class StrategyEvaluator {
 
   final StrategyConfig config;
 
-  /// 指標を出すのに必要な最低本数。
-  int get requiredBars {
-    final need = [
-      config.bbPeriod,
-      config.rsiPeriod + 1,
-      config.emaPeriod,
-    ].reduce((a, b) => a > b ? a : b);
-    // Wilder 平滑は再帰なので、しきい値判定に使うには十分な助走が要る。
-    return need + config.rsiPeriod * 5;
-  }
+  /// 指標を出すのに必要な最低本数。期間は方向ごとなので方向で変わる。
+  int requiredBarsFor(TradeDirection direction) =>
+      config.sideOf(direction).requiredBars;
 
   SignalEvaluation evaluate({
     required String symbol,
@@ -79,7 +74,7 @@ class StrategyEvaluator {
       rejectReason: reason,
     );
 
-    if (closes.length < requiredBars) {
+    if (closes.length < side.requiredBars) {
       return build(reason: RejectReason.insufficientData);
     }
     final price = closes.last;
@@ -91,9 +86,9 @@ class StrategyEvaluator {
     }
 
     // 指標は却下する場合も全部埋めて返す。画面で「あと何が足りないか」を見たいので。
-    final rsi = Indicators.rsi(closes, config.rsiPeriod);
-    final bb = Indicators.bollinger(closes, config.bbPeriod, side.bbSigma);
-    final ema = Indicators.ema(closes, config.emaPeriod);
+    final rsi = Indicators.rsi(closes, side.rsiPeriod);
+    final bb = Indicators.bollinger(closes, side.bbPeriod, side.bbSigma);
+    final ema = Indicators.ema(closes, side.emaPeriod);
 
     // 判定に使うバンド (ショートは +σ、ロングは -σ) と、そこからの乖離率。
     // バンドの外側を正にして、方向によらず同じ向きで扱う。
@@ -148,7 +143,7 @@ class StrategyEvaluator {
       price: price,
     );
 
-    if (amount24 < config.minAmount24Usdt) {
+    if (amount24 < side.minAmount24Usdt) {
       return reject(RejectReason.lowVolume);
     }
 

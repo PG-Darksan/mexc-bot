@@ -163,9 +163,9 @@ void main() {
     // EMA と価格を直接指定できるよう、EMA=100 になる系列を作る。
     final closes = [for (var i = 0; i < 199; i++) 100.0, 110.0];
     final config = StrategyConfig(
-      emaPeriod: 1, // EMA(1) = 直近値なので乖離が出ない。
       fundingFilterEnabled: false,
       short: const SideConfig.short().copyWith(
+        emaPeriod: 1, // EMA(1) = 直近値なので乖離が出ない。
         rsiThreshold: 1,
         bbSigma: 0.1,
         minTakeProfitPercent: 0,
@@ -502,7 +502,12 @@ void main() {
       expect(l.minTakeProfitPercent, s.minTakeProfitPercent);
       expect(l.maxFundingBurdenPercent, s.maxFundingBurdenPercent);
       expect(l.minFundingIntervalHours, s.minFundingIntervalHours);
-      expect(l.limitOffsetPercent, s.limitOffsetPercent);
+      expect(l.minAmount24Usdt, s.minAmount24Usdt);
+      expect(l.timeframes, s.timeframes);
+      expect(l.bbPeriod, s.bbPeriod);
+      expect(l.rsiPeriod, s.rsiPeriod);
+      expect(l.emaPeriod, s.emaPeriod);
+      expect(l.historyBars, s.historyBars);
     });
 
     test('mirrored で反対方向にそろえられる', () {
@@ -522,9 +527,16 @@ void main() {
 
     test('JSON と往復できる', () {
       final config = StrategyConfig(
-        timeframes: const [Timeframe.m5, Timeframe.h1],
-        short: const SideConfig.short().copyWith(bbSigma: 3.5, rsiThreshold: 90),
-        long: const SideConfig.long().copyWith(enabled: false, leverage: 3),
+        short: const SideConfig.short().copyWith(
+          bbSigma: 3.5,
+          rsiThreshold: 90,
+          timeframes: const [Timeframe.m5, Timeframe.h1],
+        ),
+        long: const SideConfig.long().copyWith(
+          enabled: false,
+          leverage: 3,
+          timeframes: const [Timeframe.h4],
+        ),
       );
       final restored = StrategyConfig.fromJson(config.toJson());
       expect(restored.short.bbSigma, 3.5);
@@ -533,7 +545,73 @@ void main() {
       expect(restored.long.enabled, isFalse);
       expect(restored.long.leverage, 3);
       expect(restored.long.direction, TradeDirection.long);
+      expect(restored.short.timeframes, [Timeframe.m5, Timeframe.h1]);
+      expect(restored.long.timeframes, [Timeframe.h4]);
+      // ロングを切ってあるので、集めるのはショートの足だけ。
       expect(restored.timeframes, [Timeframe.m5, Timeframe.h1]);
+    });
+
+    test('出来高と時間軸は方向ごとに持てる', () {
+      final config = StrategyConfig(
+        short: const SideConfig.short().copyWith(
+          minAmount24Usdt: 20000000,
+          timeframes: const [Timeframe.m15],
+          rsiPeriod: 14,
+        ),
+        long: const SideConfig.long().copyWith(
+          minAmount24Usdt: 3000000,
+          timeframes: const [Timeframe.h4, Timeframe.d1],
+          rsiPeriod: 7,
+        ),
+      );
+      // 監視銘柄は広いほうで集めて、判定で方向ごとに落とす。
+      expect(config.minAmount24Usdt, 3000000);
+      expect(config.timeframes, [
+        Timeframe.m15,
+        Timeframe.h4,
+        Timeframe.d1,
+      ]);
+      expect(config.validate(), isEmpty);
+
+      final restored = StrategyConfig.fromJson(config.toJson());
+      expect(restored.short.minAmount24Usdt, 20000000);
+      expect(restored.short.rsiPeriod, 14);
+      expect(restored.long.minAmount24Usdt, 3000000);
+      expect(restored.long.timeframes, [Timeframe.h4, Timeframe.d1]);
+    });
+
+    test('出来高の下限は方向ごとに効く', () {
+      // ショートだけ下限を上げ、出来高がその間に入る銘柄を出す。
+      final config = StrategyConfig(
+        fundingFilterEnabled: false,
+        short: const SideConfig.short().copyWith(minAmount24Usdt: 90000000),
+        long: const SideConfig.long().copyWith(minAmount24Usdt: 1000000),
+      );
+      final result = StrategyEvaluator(config).evaluate(
+        symbol: symbol,
+        timeframe: Timeframe.m15,
+        direction: TradeDirection.short,
+        series: seriesFrom(spikeSeries()),
+        contract: contract(),
+        ticker: ticker(10000000),
+      );
+      expect(result.rejectReason, RejectReason.lowVolume);
+    });
+
+    test('時間軸が共通だった頃の保存データは両方向に写る', () {
+      final old = <String, dynamic>{
+        'minAmount24Usdt': 8000000.0,
+        'timeframes': ['m5', 'h1'],
+        'rsiPeriod': 9,
+        'short': {'direction': 'short', 'rsiThreshold': 95.0},
+        'long': {'direction': 'long', 'rsiThreshold': 5.0},
+      };
+      final config = StrategyConfig.fromJson(old);
+      for (final side in [config.short, config.long]) {
+        expect(side.minAmount24Usdt, 8000000.0);
+        expect(side.timeframes, [Timeframe.m5, Timeframe.h1]);
+        expect(side.rsiPeriod, 9);
+      }
     });
 
     test('方向ごとの設定が無い古い保存データも読める', () {
@@ -560,9 +638,9 @@ void main() {
 
     test('おかしな設定はエラーを返す', () {
       final config = StrategyConfig(
-        bbPeriod: 1,
-        timeframes: const [],
         short: const SideConfig.short().copyWith(
+          bbPeriod: 1,
+          timeframes: const [],
           takeProfitFactor: 2,
           leverage: 0,
         ),

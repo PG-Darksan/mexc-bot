@@ -39,16 +39,8 @@ class TradeExecutor {
     final isShort = direction.isShort;
     final markPrice = evaluation.price;
 
-    // 指値は自分に有利な側 (ショートは高く売る / ロングは安く買う) へ離す。
-    final entryPrice = config.orderType == EntryOrderType.limit
-        ? contract.roundPrice(
-            markPrice *
-                (isShort
-                    ? 1 + side.limitOffsetPercent / 100
-                    : 1 - side.limitOffsetPercent / 100),
-            roundUp: isShort,
-          )
-        : contract.roundPrice(markPrice, roundUp: !isShort);
+    // 成行で出す。約定しやすい側へ刻みを丸める。
+    final entryPrice = contract.roundPrice(markPrice, roundUp: !isShort);
 
     final vol = contract.volumeForMargin(
       marginUsdt: side.marginPerTradeUsdt,

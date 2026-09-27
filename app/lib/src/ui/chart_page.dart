@@ -527,8 +527,11 @@ class _ChartCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final closes = [for (final c in candles) c.close];
-    final rsi = closes.length > config.rsiPeriod
-        ? Indicators.rsi(closes, config.rsiPeriod)
+    // 期間は方向ごとに決められるので、チャートには代表の側 (ショートを
+    // 切っていればロング) の期間を出す。
+    final side = config.primarySide;
+    final rsi = closes.length > side.rsiPeriod
+        ? Indicators.rsi(closes, side.rsiPeriod)
         : null;
     final last = closes.isEmpty ? null : closes.last;
     final first = closes.isEmpty ? null : closes.first;
@@ -615,7 +618,7 @@ class _ChartCard extends StatelessWidget {
               Text(
                 '現在値 ${formatPrice(last)}'
                 '${change == null ? '' : '  /  この期間 ${change >= 0 ? '+' : ''}${change.toStringAsFixed(2)}%'}'
-                '${rsi == null ? '' : '  /  RSI(${config.rsiPeriod}) ${rsi.toStringAsFixed(1)}'}',
+                '${rsi == null ? '' : '  /  RSI(${side.rsiPeriod}) ${rsi.toStringAsFixed(1)}'}',
                 style: theme.textTheme.bodySmall,
               ),
             const SizedBox(height: 4),
@@ -638,9 +641,9 @@ class _ChartCard extends StatelessWidget {
             else
               PriceChart(
                 candles: candles,
-                bbPeriod: config.bbPeriod,
-                bbSigma: config.short.bbSigma,
-                emaPeriod: config.emaPeriod,
+                bbPeriod: side.bbPeriod,
+                bbSigma: side.bbSigma,
+                emaPeriod: side.emaPeriod,
                 lines: lines,
                 onDragPrice: onDragPrice,
               ),
