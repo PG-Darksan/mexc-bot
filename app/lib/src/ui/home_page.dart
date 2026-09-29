@@ -3,8 +3,9 @@ import 'package:mexc_core/mexc_core.dart';
 
 import '../app.dart';
 import '../settings/app_settings.dart';
-import '../settings/app_settings.dart';
+import '../state/app_state.dart';
 import 'chart_page.dart';
+import 'market_page.dart';
 import 'orders_page.dart';
 import 'settings_page.dart';
 
@@ -17,10 +18,12 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _index = 0;
+  AppState? _state;
 
   // 残高とチャートは同じタブにまとめてある。
   static const _destinations = [
     (icon: Icons.home_outlined, selected: Icons.home, label: 'ホーム'),
+    (icon: Icons.list_alt_outlined, selected: Icons.list_alt, label: '銘柄'),
     (
       icon: Icons.receipt_long_outlined,
       selected: Icons.receipt_long,
@@ -30,13 +33,40 @@ class _HomePageState extends State<HomePage> {
   ];
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final state = AppScope.of(context);
+    if (identical(state, _state)) return;
+    _state?.chartRequest.removeListener(_onChartRequest);
+    _state = state;
+    state.chartRequest.addListener(_onChartRequest);
+  }
+
+  @override
+  void dispose() {
+    _state?.chartRequest.removeListener(_onChartRequest);
+    super.dispose();
+  }
+
+  /// 銘柄一覧などで「チャートを見る」を押したら、ホームへ移る。
+  void _onChartRequest() {
+    if (!mounted || _state?.chartRequest.value == null) return;
+    setState(() => _index = 0);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
     if (!state.initialized) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    final pages = const [ChartPage(), OrdersPage(), SettingsPage()];
+    final pages = const [
+      ChartPage(),
+      MarketPage(),
+      OrdersPage(),
+      SettingsPage(),
+    ];
 
     final wide = MediaQuery.sizeOf(context).width >= 900;
 

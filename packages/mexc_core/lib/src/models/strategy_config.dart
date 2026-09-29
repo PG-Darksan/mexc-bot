@@ -65,6 +65,9 @@ class SideConfig {
     this.minFundingIntervalHours = 2,
     this.bandBreakoutEntryEnabled = true,
     this.bandBreakoutPercent = 20.0,
+    this.addOnEnabled = false,
+    this.addOnLossPercent = 10.0,
+    this.addOnBudgetPercent = 100.0,
   });
 
   /// ショートの既定値 (利用者の指定どおりの条件)。
@@ -146,6 +149,30 @@ class SideConfig {
   /// ショートは +σ の上、ロングは -σ の下にこれだけ離れたときが対象。
   final double bandBreakoutPercent;
 
+  // ── 買い足し / 売り足し ─────────────────────────────────────
+  /// 成行で建てたあと、逆行したところに同じ向きの指値を置くか。
+  ///
+  /// ロングなら建値より下に買い指値、ショートなら建値より上に売り指値。
+  /// 約定すれば平均建値が有利な側へ寄る。利確の目標は動かさない。
+  final bool addOnEnabled;
+
+  /// 証拠金に対する含み損がこの % になる価格に指値を置く。
+  ///
+  /// レバレッジ 1 倍なら建値からの値動き % と同じ。2 倍なら値動きは半分で済む。
+  final double addOnLossPercent;
+
+  /// 成行を出したあと口座に残っている USDT のうち、指値に使う割合 (%)。
+  ///
+  /// 指値を置いた時点でその証拠金は凍結されるので、
+  /// 100% にすると次の銘柄の新規建てに回す資金が無くなる。
+  final double addOnBudgetPercent;
+
+  /// 買い足しの指値を置く価格。建値からの値動きは 含み損% ÷ レバレッジ。
+  double addOnPriceFor(double entryPrice) {
+    final move = addOnLossPercent / 100 / leverage;
+    return direction.isShort ? entryPrice * (1 + move) : entryPrice * (1 - move);
+  }
+
   /// この方向の指標を出すのに必要な最低本数。
   ///
   /// Wilder 平滑は再帰なので、しきい値判定に使うには十分な助走が要る。
@@ -180,6 +207,9 @@ class SideConfig {
     minFundingIntervalHours: minFundingIntervalHours,
     bandBreakoutEntryEnabled: bandBreakoutEntryEnabled,
     bandBreakoutPercent: bandBreakoutPercent,
+    addOnEnabled: addOnEnabled,
+    addOnLossPercent: addOnLossPercent,
+    addOnBudgetPercent: addOnBudgetPercent,
   );
 
   /// この方向の設定に問題があれば日本語で返す。
@@ -217,6 +247,17 @@ class SideConfig {
         bandBreakoutPercent >= 100) {
       errors.add('$name: バンドからの乖離幅は 100% 未満にしてください。');
     }
+    if (addOnEnabled) {
+      if (addOnLossPercent <= 0) {
+        errors.add('$name: 買い足しを入れる含み損は 0 より大きい値にしてください。');
+      }
+      if (direction.isLong && addOnLossPercent / leverage >= 100) {
+        errors.add('$name: 買い足しの含み損 ÷ レバレッジ は 100% 未満にしてください。');
+      }
+      if (addOnBudgetPercent <= 0 || addOnBudgetPercent > 100) {
+        errors.add('$name: 買い足しに使う残り資金の割合は 0 より大きく 100 以下にしてください。');
+      }
+    }
     return errors;
   }
 
@@ -238,6 +279,9 @@ class SideConfig {
     int? minFundingIntervalHours,
     bool? bandBreakoutEntryEnabled,
     double? bandBreakoutPercent,
+    bool? addOnEnabled,
+    double? addOnLossPercent,
+    double? addOnBudgetPercent,
   }) => SideConfig(
     direction: direction,
     enabled: enabled ?? this.enabled,
@@ -260,6 +304,9 @@ class SideConfig {
     bandBreakoutEntryEnabled:
         bandBreakoutEntryEnabled ?? this.bandBreakoutEntryEnabled,
     bandBreakoutPercent: bandBreakoutPercent ?? this.bandBreakoutPercent,
+    addOnEnabled: addOnEnabled ?? this.addOnEnabled,
+    addOnLossPercent: addOnLossPercent ?? this.addOnLossPercent,
+    addOnBudgetPercent: addOnBudgetPercent ?? this.addOnBudgetPercent,
   );
 
   Map<String, dynamic> toJson() => {
@@ -281,6 +328,9 @@ class SideConfig {
     'minFundingIntervalHours': minFundingIntervalHours,
     'bandBreakoutEntryEnabled': bandBreakoutEntryEnabled,
     'bandBreakoutPercent': bandBreakoutPercent,
+    'addOnEnabled': addOnEnabled,
+    'addOnLossPercent': addOnLossPercent,
+    'addOnBudgetPercent': addOnBudgetPercent,
   };
 
   factory SideConfig.fromJson(
@@ -326,6 +376,9 @@ class SideConfig {
           b('bandBreakoutEntryEnabled', fallback.bandBreakoutEntryEnabled),
       bandBreakoutPercent:
           d('bandBreakoutPercent', fallback.bandBreakoutPercent),
+      addOnEnabled: b('addOnEnabled', fallback.addOnEnabled),
+      addOnLossPercent: d('addOnLossPercent', fallback.addOnLossPercent),
+      addOnBudgetPercent: d('addOnBudgetPercent', fallback.addOnBudgetPercent),
     );
   }
 }

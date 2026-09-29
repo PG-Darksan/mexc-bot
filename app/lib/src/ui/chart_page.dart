@@ -3,6 +3,7 @@ import 'package:mexc_core/mexc_core.dart';
 
 import '../app.dart';
 import '../data/chart_data.dart';
+import '../state/app_state.dart';
 import 'dashboard_page.dart';
 import 'format.dart';
 import 'price_chart.dart';
@@ -49,12 +50,34 @@ class _ChartPageState extends State<ChartPage> {
   double? _stopLossDraft;
   bool _sending = false;
 
+  AppState? _state;
+  int _seenRequest = 0;
+
   @override
   void initState() {
     super.initState();
     _loadChart();
     _loadIndex();
     _loadSymbols();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final state = AppScope.of(context);
+    if (identical(state, _state)) return;
+    _state?.chartRequest.removeListener(_onChartRequest);
+    _state = state;
+    state.chartRequest.addListener(_onChartRequest);
+  }
+
+  /// 銘柄一覧で押された銘柄に切り替える。
+  void _onChartRequest() {
+    final request = _state?.chartRequest.value;
+    if (request == null || request.serial == _seenRequest || !mounted) return;
+    _seenRequest = request.serial;
+    setState(() => _symbol = request.symbol);
+    _loadChart();
   }
 
   /// 検索に使う銘柄の一覧。取れなくてもチャートは見られるので、黙って諦める。
@@ -70,6 +93,7 @@ class _ChartPageState extends State<ChartPage> {
 
   @override
   void dispose() {
+    _state?.chartRequest.removeListener(_onChartRequest);
     _source.dispose();
     super.dispose();
   }
@@ -263,6 +287,13 @@ class _ChartPageState extends State<ChartPage> {
         color: Colors.green,
         emphasized: _editing == _ExitLine.takeProfit,
       ),
+      if (position.hasPendingAddOn && position.addOnPrice != null)
+        PriceLine(
+          price: position.addOnPrice!,
+          label: position.direction.isShort ? '売り足し' : '買い足し',
+          color: Colors.amber,
+          dashed: true,
+        ),
       if (sl != null)
         PriceLine(
           price: sl,

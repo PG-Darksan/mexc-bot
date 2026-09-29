@@ -6,6 +6,47 @@ import '../models/contract_info.dart';
 import '../models/signal.dart';
 import '../models/strategy_config.dart';
 
+/// 買い足し / 売り足しの指値をどこに何枚置くかの計算結果。
+///
+/// 通信を伴わない純粋な計算なので、発注とは切り離してテストできる。
+class AddOnPlan {
+  const AddOnPlan({required this.price, required this.vol, required this.marginUsdt});
+
+  /// 指値の価格 (取引所の刻みに丸めたあと)。
+  final double price;
+
+  /// 枚数。
+  final double vol;
+
+  /// この注文に充てる証拠金 (USDT)。
+  final double marginUsdt;
+
+  /// 建値と残り資金から計画を立てる。数量が最小に届かなければ null。
+  ///
+  /// ロングは建値より下に買い指値 (刻みは切り下げ)、ショートは建値より上に
+  /// 売り指値 (切り上げ)。どちらも「約定したら平均建値が有利になる側」。
+  static AddOnPlan? compute({
+    required SideConfig side,
+    required ContractInfo contract,
+    required double entryPrice,
+    required double availableUsdt,
+  }) {
+    if (!side.addOnEnabled || availableUsdt <= 0) return null;
+    final raw = side.addOnPriceFor(entryPrice);
+    if (raw <= 0) return null;
+    final price = contract.roundPrice(raw, roundUp: side.direction.isShort);
+    if (price <= 0) return null;
+    final margin = availableUsdt * side.addOnBudgetPercent / 100;
+    final vol = contract.volumeForMargin(
+      marginUsdt: margin,
+      leverage: side.leverage.toDouble(),
+      price: price,
+    );
+    if (vol == null) return null;
+    return AddOnPlan(price: price, vol: vol, marginUsdt: margin);
+  }
+}
+
 /// 発注まわりだけを担当する。
 ///
 /// MEXC の先物は side の数値で新規/決済と売買方向を表す。
@@ -113,6 +154,68 @@ class TradeExecutor {
     );
 
     return position.copyWith(exchangeOrderId: result.orderId);
+  }
+
+  /// 成行で建てたあと、逆行した所に同じ向きの指値 (買い足し / 売り足し) を置く。
+  ///
+  /// 口座に残っている USDT のうち設定の割合を証拠金にする。指値が約定すると
+  /// 平均建値が有利な側へ寄る。利確の目標は変えない (取引所に預けた利確は
+  /// 約定後に枚数を合わせて置き直す)。
+  Future<ManagedPosition> placeAddOn({
+    required ManagedPosition position,
+    required ContractInfo contract,
+    required StrategyConfig config,
+    required double availableUsdt,
+  }) async {
+    final side = config.sideOf(position.direction);
+    final plan = AddOnPlan.compute(
+      side: side,
+      contract: contract,
+      entryPrice: position.entryPrice,
+      availableUsdt: availableUsdt,
+    );
+    if (plan == null) {
+      throw StateError(
+        '${contract.symbol}: 残り ${availableUsdt.toStringAsFixed(2)} USDT の '
+        '${side.addOnBudgetPercent}% では最小数量 (${contract.minVol} 枚) に届きません。',
+      );
+    }
+
+    final result = await _rest.createOrder(
+      symbol: contract.symbol,
+      price: plan.price,
+      vol: plan.vol,
+      side: position.direction.openSide,
+      // 指値 (type=1)。価格に届くまで板に残り、証拠金はその間凍結される。
+      type: 1,
+      openType: config.openType,
+      leverage: side.leverage,
+      positionMode: config.positionModeValue,
+      externalOid: _newExternalOid(),
+    );
+
+    onLog?.call(
+      '${contract.symbol} ${position.direction.label}の'
+      '${position.direction.isShort ? "売り足し" : "買い足し"}指値 '
+      '${plan.vol.toStringAsFixed(contract.volScale)} 枚 @ ${plan.price} '
+      '(含み損 ${side.addOnLossPercent}% の所 / 証拠金 '
+      '${plan.marginUsdt.toStringAsFixed(2)} USDT / 注文ID ${result.orderId})',
+    );
+
+    return position.copyWith(
+      addOnOrderId: result.orderId,
+      addOnPrice: plan.price,
+      addOnVol: plan.vol,
+      addOnFilled: false,
+    );
+  }
+
+  /// 残っている買い足しの指値を取り消す。無ければ何もしない。
+  Future<void> cancelAddOn(ManagedPosition position) async {
+    final id = position.addOnOrderId;
+    if (id == null || position.addOnFilled) return;
+    await _rest.cancelOrders([id]);
+    onLog?.call('${position.symbol}: 買い足しの指値 (注文ID $id) を取り消しました');
   }
 
   /// 成行で決済する。

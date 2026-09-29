@@ -424,6 +424,12 @@ class _SideConditions extends StatelessWidget {
               '建玉',
               '${side.marginPerTradeUsdt} USDT × ${side.leverage} 倍',
             ),
+            if (side.addOnEnabled)
+              _Condition(
+                isShort ? '売り足し' : '買い足し',
+                '含み損 ${side.addOnLossPercent}% で '
+                    '残り資金の ${side.addOnBudgetPercent.toStringAsFixed(0)}%',
+              ),
             if (config.fundingFilterEnabled)
               _Condition(
                 '資金調達',

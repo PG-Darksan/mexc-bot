@@ -196,6 +196,10 @@ class ManagedPosition {
     this.closePrice,
     this.realizedPnl,
     this.note,
+    this.addOnOrderId,
+    this.addOnPrice,
+    this.addOnVol,
+    this.addOnFilled = false,
   });
 
   /// externalOid と同じ値。取引所側と突き合わせるのに使う。
@@ -230,6 +234,21 @@ class ManagedPosition {
   final double? realizedPnl;
   final String? note;
 
+  /// 買い足し / 売り足しの指値注文。置いていなければ null。
+  final String? addOnOrderId;
+
+  /// 買い足しの指値。
+  final double? addOnPrice;
+
+  /// 買い足しの枚数。
+  final double? addOnVol;
+
+  /// 買い足しが約定して、[vol] と [entryPrice] が平均後の値になっているか。
+  final bool addOnFilled;
+
+  /// 買い足しの指値がまだ取引所に残っているか。
+  bool get hasPendingAddOn => addOnOrderId != null && !addOnFilled;
+
   /// 建玉の名目価値 (USDT)。
   double get notional => entryPrice * vol * contractSize;
 
@@ -245,6 +264,8 @@ class ManagedPosition {
   }
 
   ManagedPosition copyWith({
+    double? entryPrice,
+    double? vol,
     double? takeProfitPrice,
     double? stopLossPrice,
     /// true なら [stopLossPrice] を消す (null は「変えない」の意味なので)。
@@ -256,14 +277,20 @@ class ManagedPosition {
     double? closePrice,
     double? realizedPnl,
     String? note,
+    String? addOnOrderId,
+    double? addOnPrice,
+    double? addOnVol,
+    bool? addOnFilled,
+    /// true なら買い足し注文の記録を消す (取り消したとき)。
+    bool clearAddOn = false,
   }) => ManagedPosition(
     id: id,
     symbol: symbol,
     timeframe: timeframe,
     direction: direction,
     openedAt: openedAt,
-    entryPrice: entryPrice,
-    vol: vol,
+    entryPrice: entryPrice ?? this.entryPrice,
+    vol: vol ?? this.vol,
     contractSize: contractSize,
     leverage: leverage,
     emaAtSignal: emaAtSignal,
@@ -277,6 +304,10 @@ class ManagedPosition {
     closePrice: closePrice ?? this.closePrice,
     realizedPnl: realizedPnl ?? this.realizedPnl,
     note: note ?? this.note,
+    addOnOrderId: clearAddOn ? null : (addOnOrderId ?? this.addOnOrderId),
+    addOnPrice: clearAddOn ? null : (addOnPrice ?? this.addOnPrice),
+    addOnVol: clearAddOn ? null : (addOnVol ?? this.addOnVol),
+    addOnFilled: clearAddOn ? false : (addOnFilled ?? this.addOnFilled),
   );
 
   Map<String, dynamic> toJson() => {
@@ -300,6 +331,10 @@ class ManagedPosition {
     'closePrice': closePrice,
     'realizedPnl': realizedPnl,
     'note': note,
+    'addOnOrderId': addOnOrderId,
+    'addOnPrice': addOnPrice,
+    'addOnVol': addOnVol,
+    'addOnFilled': addOnFilled,
   };
 
   factory ManagedPosition.fromJson(Map<String, dynamic> json) =>
@@ -332,6 +367,10 @@ class ManagedPosition {
         closePrice: (json['closePrice'] as num?)?.toDouble(),
         realizedPnl: (json['realizedPnl'] as num?)?.toDouble(),
         note: json['note'] as String?,
+        addOnOrderId: json['addOnOrderId'] as String?,
+        addOnPrice: (json['addOnPrice'] as num?)?.toDouble(),
+        addOnVol: (json['addOnVol'] as num?)?.toDouble(),
+        addOnFilled: json['addOnFilled'] as bool? ?? false,
       );
 }
 

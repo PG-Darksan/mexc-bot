@@ -379,6 +379,46 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                     ),
                   ],
+                  _PairSwitch(
+                    title: '含み損が出たら買い足し / 売り足しする',
+                    shortValue: draft.short.addOnEnabled,
+                    longValue: draft.long.addOnEnabled,
+                    onShortChanged: (v) =>
+                        _updateShort((x) => x.copyWith(addOnEnabled: v)),
+                    onLongChanged: (v) =>
+                        _updateLong((x) => x.copyWith(addOnEnabled: v)),
+                  ),
+                  if (draft.short.addOnEnabled || draft.long.addOnEnabled) ...[
+                    _PairField(
+                      title: '指値を置く含み損 [%] (証拠金に対して)',
+                      shortValue: draft.short.addOnLossPercent,
+                      longValue: draft.long.addOnLossPercent,
+                      onShortChanged: (v) =>
+                          _updateShort((x) => x.copyWith(addOnLossPercent: v)),
+                      onLongChanged: (v) =>
+                          _updateLong((x) => x.copyWith(addOnLossPercent: v)),
+                    ),
+                    _PairField(
+                      title: '残り資金のうち使う割合 [%]',
+                      shortValue: draft.short.addOnBudgetPercent,
+                      longValue: draft.long.addOnBudgetPercent,
+                      onShortChanged: (v) => _updateShort(
+                        (x) => x.copyWith(addOnBudgetPercent: v),
+                      ),
+                      onLongChanged: (v) =>
+                          _updateLong((x) => x.copyWith(addOnBudgetPercent: v)),
+                    ),
+                    const _Hint(
+                      '成行で建てた直後、口座に残っている USDT のこの割合を証拠金にして、'
+                      '含み損がこの % になる価格に同じ向きの指値を置きます '
+                      '(ロングは建値の下に買い、ショートは建値の上に売り。'
+                      'レバレッジ 1 倍なら建値からの値動き % と同じ)。\n'
+                      '約定すると平均建値が有利な側に寄ります。利確の目標は動かしません。'
+                      '指値を置いた分の資金は凍結されるので、100% にすると次の銘柄に'
+                      '回す資金が無くなります。決済したあとは指値を取り消しますが、'
+                      '次の判定までの間 (最大で判定間隔ぶん) は残ることがあります。',
+                    ),
+                  ],
                   const SizedBox(height: 4),
                   Row(
                     children: [

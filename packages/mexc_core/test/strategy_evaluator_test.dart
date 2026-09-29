@@ -438,6 +438,129 @@ void main() {
     });
   });
 
+  group('買い足し / 売り足しの計画', () {
+    test('ロングは建値の下、ショートは建値の上に置く', () {
+      final long = const SideConfig.long().copyWith(
+        addOnEnabled: true,
+        addOnLossPercent: 10,
+        addOnBudgetPercent: 100,
+      );
+      final planL = AddOnPlan.compute(
+        side: long,
+        contract: contract(),
+        entryPrice: 100,
+        availableUsdt: 1000,
+      )!;
+      expect(planL.price, 90);
+      // 1000 USDT × 1 倍 ÷ 90 = 11.1 → 11 枚。
+      expect(planL.vol, 11);
+      expect(planL.marginUsdt, 1000);
+
+      final short = const SideConfig.short().copyWith(
+        addOnEnabled: true,
+        addOnLossPercent: 10,
+        addOnBudgetPercent: 50,
+      );
+      final planS = AddOnPlan.compute(
+        side: short,
+        contract: contract(),
+        entryPrice: 100,
+        availableUsdt: 1000,
+      )!;
+      expect(planS.price, 110);
+      // 500 USDT ÷ 110 = 4.5 → 4 枚。
+      expect(planS.vol, 4);
+      expect(planS.marginUsdt, 500);
+    });
+
+    test('含み損はレバレッジで割った値動きになる', () {
+      final side = const SideConfig.long().copyWith(
+        addOnEnabled: true,
+        addOnLossPercent: 10,
+        leverage: 2,
+      );
+      final plan = AddOnPlan.compute(
+        side: side,
+        contract: contract(),
+        entryPrice: 100,
+        availableUsdt: 1000,
+      )!;
+      // 証拠金の 10% の損 = 値動き 5%。
+      expect(plan.price, 95);
+      // 2 倍なので 1000 × 2 ÷ 95 = 21.05 → 21 枚。
+      expect(plan.vol, 21);
+    });
+
+    test('切ってある・資金が無い・最小数量に届かないときは置かない', () {
+      final on = const SideConfig.long().copyWith(addOnEnabled: true);
+      expect(
+        AddOnPlan.compute(
+          side: const SideConfig.long(),
+          contract: contract(),
+          entryPrice: 100,
+          availableUsdt: 1000,
+        ),
+        isNull,
+      );
+      expect(
+        AddOnPlan.compute(
+          side: on,
+          contract: contract(),
+          entryPrice: 100,
+          availableUsdt: 0,
+        ),
+        isNull,
+      );
+      // 50 USDT では 90 USDT の 1 枚に届かない。
+      expect(
+        AddOnPlan.compute(
+          side: on,
+          contract: contract(),
+          entryPrice: 100,
+          availableUsdt: 50,
+        ),
+        isNull,
+      );
+    });
+
+    test('建玉の記録に買い足しを持たせて往復できる', () {
+      final position = ManagedPosition(
+        id: 'p',
+        symbol: symbol,
+        timeframe: Timeframe.m15,
+        direction: TradeDirection.long,
+        openedAt: DateTime.now(),
+        entryPrice: 100,
+        vol: 2,
+        contractSize: 1,
+        leverage: 1,
+        emaAtSignal: 95,
+        deviationAtSignal: -0.05,
+        takeProfitPrice: 97,
+        status: ManagedPositionStatus.open,
+      ).copyWith(addOnOrderId: '42', addOnPrice: 90, addOnVol: 11);
+      expect(position.hasPendingAddOn, isTrue);
+
+      final restored = ManagedPosition.fromJson(position.toJson());
+      expect(restored.addOnOrderId, '42');
+      expect(restored.addOnPrice, 90);
+      expect(restored.addOnVol, 11);
+      expect(restored.addOnFilled, isFalse);
+
+      // 約定したら枚数と建値を取引所の値に合わせる。
+      final filled = restored.copyWith(
+        vol: 13,
+        entryPrice: 91.5,
+        addOnFilled: true,
+      );
+      expect(filled.hasPendingAddOn, isFalse);
+      expect(filled.pnlAt(97), closeTo((97 - 91.5) * 13, 1e-9));
+
+      // 取り消したら記録も消える。
+      expect(restored.copyWith(clearAddOn: true).addOnOrderId, isNull);
+    });
+  });
+
   group('建玉の損益', () {
     ManagedPosition position(TradeDirection direction) => ManagedPosition(
       id: 'x',
@@ -612,6 +735,37 @@ void main() {
         expect(side.timeframes, [Timeframe.m5, Timeframe.h1]);
         expect(side.rsiPeriod, 9);
       }
+    });
+
+    test('買い足しの設定は JSON と往復でき、おかしな値は弾く', () {
+      final config = StrategyConfig(
+        short: const SideConfig.short().copyWith(
+          addOnEnabled: true,
+          addOnLossPercent: 15,
+          addOnBudgetPercent: 50,
+        ),
+      );
+      final restored = StrategyConfig.fromJson(config.toJson());
+      expect(restored.short.addOnEnabled, isTrue);
+      expect(restored.short.addOnLossPercent, 15);
+      expect(restored.short.addOnBudgetPercent, 50);
+      // ロングは既定のまま (切ってある)。
+      expect(restored.long.addOnEnabled, isFalse);
+      expect(config.validate(), isEmpty);
+
+      final bad = StrategyConfig(
+        long: const SideConfig.long().copyWith(
+          addOnEnabled: true,
+          addOnLossPercent: 0,
+          addOnBudgetPercent: 150,
+        ),
+      );
+      expect(bad.validate().length, 2);
+      // 切ってあれば値がおかしくても文句を言わない。
+      expect(
+        bad.copyWith(long: bad.long.copyWith(addOnEnabled: false)).validate(),
+        isEmpty,
+      );
     });
 
     test('方向ごとの設定が無い古い保存データも読める', () {

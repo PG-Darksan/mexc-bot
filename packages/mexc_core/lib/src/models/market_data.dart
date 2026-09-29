@@ -15,6 +15,8 @@ class TickerSnapshot {
     required this.fundingRate,
     required this.riseFallRate,
     required this.timestamp,
+    this.high24Price = 0,
+    this.lower24Price = 0,
   });
 
   final String symbol;
@@ -31,8 +33,20 @@ class TickerSnapshot {
   /// 直近の資金調達率 (0.0001 = 0.01%)。
   final double fundingRate;
 
+  /// 24時間の騰落率 (0.05 = +5%)。
   final double riseFallRate;
   final int timestamp;
+
+  /// 24時間の高値と安値。値幅の並べ替えに使う。
+  final double high24Price;
+  final double lower24Price;
+
+  /// 24時間の騰落率 (%)。
+  double get changePercent => riseFallRate * 100;
+
+  /// 24時間の値幅 (安値から高値までの %)。取れていなければ 0。
+  double get range24Percent =>
+      lower24Price > 0 ? (high24Price - lower24Price) / lower24Price * 100 : 0;
 
   factory TickerSnapshot.fromJson(Map<String, dynamic> json) {
     double d(String key) => (json[key] as num?)?.toDouble() ?? 0;
@@ -46,6 +60,8 @@ class TickerSnapshot {
       fundingRate: d('fundingRate'),
       riseFallRate: d('riseFallRate'),
       timestamp: (json['timestamp'] as num?)?.toInt() ?? 0,
+      high24Price: d('high24Price'),
+      lower24Price: d('lower24Price'),
     );
   }
 }

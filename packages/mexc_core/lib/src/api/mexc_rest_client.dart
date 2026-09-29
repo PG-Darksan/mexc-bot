@@ -298,10 +298,14 @@ class MexcRestClient {
   }
 
   /// 注文の取消。
+  ///
+  /// 取引所は注文 ID を数値の配列で受け取る。文字列で持っている ID は
+  /// 数値に戻して送る (戻せないものはそのまま)。
   Future<void> cancelOrders(List<String> orderIds) async {
     if (orderIds.isEmpty) return;
     await _orderLimiter.acquire();
-    await _privatePostRaw('/api/v1/private/order/cancel', orderIds);
+    final ids = orderIds.map((id) => int.tryParse(id) ?? id).toList();
+    await _privatePostRaw('/api/v1/private/order/cancel', ids);
   }
 
   /// 指定ポジションを成行で全決済する。

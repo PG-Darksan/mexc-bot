@@ -253,6 +253,13 @@ class _OrderTile extends StatelessWidget {
         _Line('利確', formatPrice(position.takeProfitPrice)),
         if (position.stopLossPrice != null)
           _Line('損切り', formatPrice(position.stopLossPrice)),
+        if (position.addOnOrderId != null)
+          _Line(
+            isShort ? '売り足し' : '買い足し',
+            '${position.addOnVol ?? '-'} 枚 @ ${formatPrice(position.addOnPrice)} '
+                '(${position.addOnFilled ? "約定済み・建値は平均後" : "指値で待機中"})',
+            color: position.addOnFilled ? Colors.green : Colors.amber.shade800,
+          ),
         if (open && markPrice != null) _Line('現在値', formatPrice(markPrice)),
         if (open && pnl != null)
           _Line(

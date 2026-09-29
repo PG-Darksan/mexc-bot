@@ -403,6 +403,8 @@ class BotEngine {
 
       // 建玉 ID は発注直後には分からないので、取引所から引き当てる。
       unawaited(_attachExchangePosition(position));
+      // 残った資金で、逆行した所に買い足し / 売り足しの指値を置く。
+      if (side.addOnEnabled) unawaited(_placeAddOnOrder(position.id));
     } on MexcApiException catch (e) {
       _log(BotEvent.error(
         '${evaluation.symbol} の発注に失敗: ${e.description}',
@@ -412,6 +414,78 @@ class BotEngine {
       _log(BotEvent.error(
         '${evaluation.symbol} の発注に失敗: $e',
         symbol: evaluation.symbol,
+      ));
+    }
+  }
+
+  /// 成行の約定で減ったあとの残高を見てから、買い足しの指値を置く。
+  ///
+  /// 失敗しても建玉そのものには影響しないので、知らせるだけにする。
+  Future<void> _placeAddOnOrder(String positionId) async {
+    try {
+      // 成行の証拠金が引かれるのを少し待ってから残高を見る。
+      await Future<void>.delayed(const Duration(seconds: 2));
+      final position = _positions[positionId];
+      if (position == null || position.addOnOrderId != null) return;
+      final contract = _feed.contractOf(position.symbol);
+      if (contract == null) return;
+
+      final assets = await _rest.fetchAssets();
+      final usdt = assets.where((a) => a.currency == 'USDT').firstOrNull;
+      final available = usdt?.availableBalance ?? 0;
+      if (available <= 0) {
+        _log(BotEvent.warning(
+          '${position.symbol}: 残り資金が無いので買い足しの指値は置きません',
+          symbol: position.symbol,
+        ));
+        return;
+      }
+
+      final updated = await _executor.placeAddOn(
+        position: position,
+        contract: contract,
+        config: _config,
+        // 手数料ぶんだけ余らせる。ぴったり使うと残高不足で弾かれる。
+        availableUsdt: available * 0.99,
+      );
+      // 待っている間に決済されていたら、置いた指値をすぐ取り消す。
+      final latest = _positions[positionId];
+      if (latest == null) {
+        await _executor.cancelAddOn(updated);
+        return;
+      }
+      // 待っている間に建玉 ID が付いているかもしれないので、最新の記録に
+      // 買い足しの分だけ足す (古い記録で上書きしない)。
+      _positions[positionId] = latest.copyWith(
+        addOnOrderId: updated.addOnOrderId,
+        addOnPrice: updated.addOnPrice,
+        addOnVol: updated.addOnVol,
+        addOnFilled: false,
+      );
+      _emitSnapshot();
+    } on MexcApiException catch (e) {
+      _log(BotEvent.warning('買い足しの指値を置けませんでした: ${e.description}'));
+    } catch (e) {
+      _log(BotEvent.warning('買い足しの指値を置けませんでした: $e'));
+    }
+  }
+
+  /// 残っている買い足しの指値を取り消す。決済したあとに約定して
+  /// 建玉が復活してしまわないようにするため。
+  Future<void> _cancelAddOnOrder(ManagedPosition position) async {
+    if (!position.hasPendingAddOn) return;
+    try {
+      await _executor.cancelAddOn(position);
+    } on MexcApiException catch (e) {
+      // 既に約定 / 取消済みなら弾かれる。それ以上できることは無い。
+      _log(BotEvent.warning(
+        '${position.symbol}: 買い足しの指値を取り消せませんでした (${e.description})',
+        symbol: position.symbol,
+      ));
+    } catch (e) {
+      _log(BotEvent.warning(
+        '${position.symbol}: 買い足しの指値を取り消せませんでした ($e)',
+        symbol: position.symbol,
       ));
     }
   }
@@ -525,14 +599,35 @@ class BotEngine {
               note: '取引所側で決済',
             ),
           );
+          // 買い足しの指値が残っていれば取り消す。放っておくと約定して
+          // 管理外の建玉になってしまう。
+          unawaited(_cancelAddOnOrder(position));
           continue;
         }
 
+        var current = position;
         // 建玉 ID をまだ持っていなければ結び付ける。
-        if (position.exchangePositionId == null) {
-          _positions[position.id] =
-              position.copyWith(exchangePositionId: match.positionId);
+        if (current.exchangePositionId == null) {
+          current = current.copyWith(exchangePositionId: match.positionId);
         }
+        // 買い足しの指値が約定して枚数が増えていたら、平均建値と枚数を
+        // 取引所の値に合わせ、利確を全枚数ぶんに置き直す。
+        if (current.hasPendingAddOn && match.holdVol > current.vol * 1.0001) {
+          current = current.copyWith(
+            vol: match.holdVol,
+            entryPrice: match.holdAvgPrice > 0 ? match.holdAvgPrice : null,
+            addOnFilled: true,
+          );
+          _log(BotEvent.trade(
+            '${current.symbol} ${current.direction.label}の'
+            '${current.direction.isShort ? "売り足し" : "買い足し"}が約定 '
+            '→ ${match.holdVol} 枚 / 平均建値 ${current.entryPrice}',
+            symbol: current.symbol,
+            data: current.toJson(),
+          ));
+          unawaited(_replaceTakeProfitFor(current));
+        }
+        if (!identical(current, position)) _positions[position.id] = current;
       }
 
       // ボットが把握していない建玉があれば知らせる (手動売買や再起動前の建玉)。
@@ -553,6 +648,31 @@ class BotEngine {
       _log(BotEvent.warning('口座情報の同期に失敗: ${e.description}'));
     } catch (e) {
       _log(BotEvent.warning('口座情報の同期に失敗: $e'));
+    }
+  }
+
+  /// 枚数が変わった建玉に、利確 (と損切り) を全枚数ぶんで置き直す。
+  Future<void> _replaceTakeProfitFor(ManagedPosition position) async {
+    final positionId = position.exchangePositionId;
+    if (positionId == null || !_rest.hasCredentials) return;
+    try {
+      await _rest.placePositionTpSl(
+        positionId: positionId,
+        vol: position.vol,
+        takeProfitPrice: position.takeProfitPrice,
+        stopLossPrice: position.stopLossPrice,
+      );
+      _log(BotEvent.info(
+        '${position.symbol}: 利確 ${position.takeProfitPrice} を '
+        '${position.vol} 枚ぶんに置き直しました',
+        symbol: position.symbol,
+      ));
+    } catch (e) {
+      _log(BotEvent.warning(
+        '${position.symbol}: 利確の置き直しに失敗: $e '
+        '(チャートから利確ラインを一度動かすと置き直せます)',
+        symbol: position.symbol,
+      ));
     }
   }
 
@@ -671,6 +791,8 @@ class BotEngine {
       _log(BotEvent.warning('${position.symbol}: 相場データが無く決済できません'));
       return;
     }
+    // 先に買い足しの指値を消す。決済のあとに約定すると建玉が復活してしまう。
+    await _cancelAddOnOrder(position);
     try {
       final closed = await _executor.close(
         position: position,

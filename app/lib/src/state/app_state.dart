@@ -7,6 +7,16 @@ import '../data/account_data.dart';
 import '../settings/app_settings.dart';
 import '../settings/settings_store.dart';
 
+/// 「この銘柄のチャートを見せて」という画面またぎの依頼。
+///
+/// 同じ銘柄を続けて頼まれても届くように、通し番号を付ける。
+class ChartRequest {
+  const ChartRequest(this.symbol, this.serial);
+
+  final String symbol;
+  final int serial;
+}
+
 /// アプリ全体の状態。
 ///
 /// ローカル実行とサーバー接続を同じ口 ([BotController]) で扱い、
@@ -30,6 +40,16 @@ class AppState extends ChangeNotifier {
   StreamSubscription<BotEvent>? _eventSub;
   StreamSubscription<ControllerConnection>? _connectionSub;
   Timer? _persistTimer;
+
+  /// 銘柄一覧などからチャートを開く依頼。ホームとチャートが聞いている。
+  final ValueNotifier<ChartRequest?> chartRequest = ValueNotifier(null);
+  int _chartRequestSerial = 0;
+
+  /// [symbol] のチャートをホームで開くよう頼む。
+  void openChart(String symbol) {
+    _chartRequestSerial++;
+    chartRequest.value = ChartRequest(symbol, _chartRequestSerial);
+  }
 
   /// 作り直しを 1 本に並べるための鎖。
   ///
@@ -328,6 +348,7 @@ class AppState extends ChangeNotifier {
 
   @override
   Future<void> dispose() async {
+    chartRequest.dispose();
     _account?.dispose();
     _persistTimer?.cancel();
     await _persistPositions();

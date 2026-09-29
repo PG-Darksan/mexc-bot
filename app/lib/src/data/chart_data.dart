@@ -50,6 +50,23 @@ class ChartDataSource {
     int bars = 200,
   }) => _rest.fetchKlines(symbol, timeframe, bars: bars);
 
+  /// 取引できる USDT 無期限の全銘柄の、いまの値段と 24 時間の動き。
+  ///
+  /// 銘柄一覧の並べ替えに使う。ticker は 1 リクエストで全部返る。
+  Future<List<TickerSnapshot>> tickers() async {
+    final results = await Future.wait([
+      _rest.fetchContracts(),
+      _rest.fetchTickers(),
+    ]);
+    final contracts = results[0] as List<ContractInfo>;
+    final tickers = results[1] as List<TickerSnapshot>;
+    final tradable = {
+      for (final c in contracts)
+        if (c.isPerpetualUsdt && c.isTradable) c.symbol,
+    };
+    return tickers.where((t) => tradable.contains(t.symbol)).toList();
+  }
+
   /// 取引できる USDT 無期限の銘柄を、名前順で返す。検索に使う。
   Future<List<String>> symbols() async {
     final contracts = await _rest.fetchContracts();
