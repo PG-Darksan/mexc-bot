@@ -393,8 +393,6 @@ class StrategyConfig {
   const StrategyConfig({
     this.short = const SideConfig.short(),
     this.long = const SideConfig.long(),
-    this.attachTakeProfitToOrder = true,
-    this.fundingFilterEnabled = true,
     this.evaluationIntervalSeconds = 60,
     this.reentryCooldownMinutes = 60,
     this.oneSignalPerBar = true,
@@ -403,14 +401,6 @@ class StrategyConfig {
   // ── 方向ごとの条件 ──────────────────────────────────────────
   final SideConfig short;
   final SideConfig long;
-
-  // ── エントリー ──────────────────────────────────────────────
-  /// 発注と同時に takeProfitPrice を付けるか。false なら約定後に別途設定する。
-  final bool attachTakeProfitToOrder;
-
-  // ── 資金調達率フィルタ ──────────────────────────────────────
-  /// フィルタ自体の入り切り。負担率や間隔の基準は方向ごとに持つ。
-  final bool fundingFilterEnabled;
 
   // ── 運用 ────────────────────────────────────────────────────
   /// 判定の実行間隔 (秒)。既定 60 秒。進行中の足も含めて毎回評価する。
@@ -421,6 +411,18 @@ class StrategyConfig {
 
   /// 同じ足で 2 回以上発火させないか。
   final bool oneSignalPerBar;
+
+  /// 発注と同時に利確 (takeProfitPrice) を取引所へ預ける。常に行う。
+  ///
+  /// こうしておけば、アプリやサーバーが落ちていても取引所側で利確される。
+  /// 切る意味が無いので設定項目にはしていない。
+  bool get attachTakeProfitToOrder => true;
+
+  /// 資金調達率のフィルタ。常に効かせる。
+  ///
+  /// その方向が支払う側のときだけ効く。負担率と間隔の基準は方向ごとに持つ。
+  /// 切る意味が無いので設定項目にはしていない。
+  bool get fundingFilterEnabled => true;
 
   /// MEXC の openType。分離マージン (1) で固定。
   ///
@@ -499,17 +501,12 @@ class StrategyConfig {
   StrategyConfig copyWith({
     SideConfig? short,
     SideConfig? long,
-    bool? attachTakeProfitToOrder,
-    bool? fundingFilterEnabled,
     int? evaluationIntervalSeconds,
     int? reentryCooldownMinutes,
     bool? oneSignalPerBar,
   }) => StrategyConfig(
     short: short ?? this.short,
     long: long ?? this.long,
-    attachTakeProfitToOrder:
-        attachTakeProfitToOrder ?? this.attachTakeProfitToOrder,
-    fundingFilterEnabled: fundingFilterEnabled ?? this.fundingFilterEnabled,
     evaluationIntervalSeconds:
         evaluationIntervalSeconds ?? this.evaluationIntervalSeconds,
     reentryCooldownMinutes:
@@ -525,8 +522,6 @@ class StrategyConfig {
   Map<String, dynamic> toJson() => {
     'short': short.toJson(),
     'long': long.toJson(),
-    'attachTakeProfitToOrder': attachTakeProfitToOrder,
-    'fundingFilterEnabled': fundingFilterEnabled,
     'evaluationIntervalSeconds': evaluationIntervalSeconds,
     'reentryCooldownMinutes': reentryCooldownMinutes,
     'oneSignalPerBar': oneSignalPerBar,
@@ -569,10 +564,6 @@ class StrategyConfig {
     return StrategyConfig(
       short: shortSide,
       long: longSide,
-      attachTakeProfitToOrder:
-          b('attachTakeProfitToOrder', fallback.attachTakeProfitToOrder),
-      fundingFilterEnabled:
-          b('fundingFilterEnabled', fallback.fundingFilterEnabled),
       evaluationIntervalSeconds:
           i('evaluationIntervalSeconds', fallback.evaluationIntervalSeconds),
       reentryCooldownMinutes:

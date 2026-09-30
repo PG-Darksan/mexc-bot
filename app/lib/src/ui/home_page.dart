@@ -175,8 +175,20 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
   }
 }
 
-class _NoticeBar extends StatelessWidget {
+class _NoticeBar extends StatefulWidget {
   const _NoticeBar();
+
+  @override
+  State<_NoticeBar> createState() => _NoticeBarState();
+}
+
+class _NoticeBarState extends State<_NoticeBar> {
+  /// × で閉じた文面。同じ知らせが出ている間は伏せておく。
+  ///
+  /// 「サーバーに繋がりません」のように、状態から毎回組み直される知らせも
+  /// 閉じられるようにするため、消した文面をここで覚えておく。
+  /// その知らせが消えたら忘れるので、もう一度起きればまた出る。
+  final Set<String> _dismissed = {};
 
   @override
   Widget build(BuildContext context) {
@@ -191,7 +203,11 @@ class _NoticeBar extends StatelessWidget {
         'サーバーに繋がりません。設定タブのURLと接続トークン、'
             'サーバーが動いているかを確認してください。',
     ];
-    if (messages.isEmpty) return const SizedBox.shrink();
+    // 出ていない知らせは覚えておく必要がない。ここで落としても、
+    // いま画面に出すものは変わらない (伏せる対象が減るだけ)。
+    _dismissed.removeWhere((m) => !messages.contains(m));
+    final visible = messages.where((m) => !_dismissed.contains(m)).toList();
+    if (visible.isEmpty) return const SizedBox.shrink();
 
     final theme = Theme.of(context);
     return Material(
@@ -208,13 +224,18 @@ class _NoticeBar extends StatelessWidget {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                messages.join('  /  '),
+                visible.join('  /  '),
                 style: TextStyle(color: theme.colorScheme.onErrorContainer),
               ),
             ),
             IconButton(
+              tooltip: '閉じる',
               icon: const Icon(Icons.close, size: 16),
-              onPressed: state.dismissNotice,
+              color: theme.colorScheme.onErrorContainer,
+              onPressed: () {
+                setState(() => _dismissed.addAll(visible));
+                state.dismissNotice();
+              },
             ),
           ],
         ),

@@ -233,16 +233,14 @@ class BotEngine {
       if (now.difference(_lastWatchlistRefresh) > watchlistRefreshInterval) {
         await _refreshWatchlist();
       }
-      if (_config.fundingFilterEnabled) {
-        // 資金調達率は ticker に入っているので、取り直しは要らない。
-        _feed.updateFundingsFromTickers();
-        // 調達の間隔だけは銘柄ごとに引く必要があるので、少しずつ集める。
-        _feed.fillMissingFundingCycles();
-        // 間隔はまず変わらないが、念のため1日に1回だけ取り直す。
-        if (now.difference(_lastFundingRefresh) > fundingCycleRefreshInterval) {
-          _lastFundingRefresh = now;
-          _feed.invalidateFundingCycles();
-        }
+      // 資金調達率は ticker に入っているので、取り直しは要らない。
+      _feed.updateFundingsFromTickers();
+      // 調達の間隔だけは銘柄ごとに引く必要があるので、少しずつ集める。
+      _feed.fillMissingFundingCycles();
+      // 間隔はまず変わらないが、念のため1日に1回だけ取り直す。
+      if (now.difference(_lastFundingRefresh) > fundingCycleRefreshInterval) {
+        _lastFundingRefresh = now;
+        _feed.invalidateFundingCycles();
       }
 
       // 新規を出す前に「いま何を持っているか」を取引所から取り直す。
@@ -503,19 +501,6 @@ class BotEngine {
       if (current == null) return;
       _positions[position.id] =
           current.copyWith(exchangePositionId: match.positionId);
-
-      // 発注時に利確を付けていない設定なら、ここでポジションに紐づける。
-      if (!_config.attachTakeProfitToOrder) {
-        await _rest.placePositionTpSl(
-          positionId: match.positionId,
-          vol: current.vol,
-          takeProfitPrice: current.takeProfitPrice,
-        );
-        _log(BotEvent.info(
-          '${position.symbol}: 建玉に利確 ${current.takeProfitPrice} を設定しました',
-          symbol: position.symbol,
-        ));
-      }
     } catch (e) {
       _log(BotEvent.warning('${position.symbol}: 建玉の紐付けに失敗: $e'));
     }
@@ -830,12 +815,10 @@ class BotEngine {
       '= ${selected.length * _config.timeframes.length} 系列',
     ));
 
-    if (_config.fundingFilterEnabled) {
-      _feed.updateFundingsFromTickers();
-      // ここで全銘柄ぶんを積むと、同じ枠を使う ticker の取得が後ろで
-      // 待たされ、判定サイクルが丸ごと止まる。少しずつ集める。
-      _feed.fillMissingFundingCycles();
-    }
+    _feed.updateFundingsFromTickers();
+    // ここで全銘柄ぶんを積むと、同じ枠を使う ticker の取得が後ろで
+    // 待たされ、判定サイクルが丸ごと止まる。少しずつ集める。
+    _feed.fillMissingFundingCycles();
   }
 
   /// 監視する銘柄は出来高だけで決める。手で選んだり外したりはしない。

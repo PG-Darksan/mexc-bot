@@ -174,8 +174,6 @@ class StatusSections extends StatelessWidget {
                       '${config.evaluationIntervalSeconds} 秒ごと',
                     ),
                     const _Condition('エントリー', '成行 / 分離マージン'),
-                    if (!config.fundingFilterEnabled)
-                      const _Condition('資金調達', 'フィルタなし'),
                   ],
                 ),
                 const Divider(height: 24),
@@ -430,12 +428,11 @@ class _SideConditions extends StatelessWidget {
                 '含み損 ${side.addOnLossPercent}% で '
                     '残り資金の ${side.addOnBudgetPercent.toStringAsFixed(0)}%',
               ),
-            if (config.fundingFilterEnabled)
-              _Condition(
-                '資金調達',
-                '負担 ${side.maxFundingBurdenPercent}% 超 / '
-                    '間隔 ${side.minFundingIntervalHours}h 未満は除外',
-              ),
+            _Condition(
+              '資金調達',
+              '負担 ${side.maxFundingBurdenPercent}% 超 / '
+                  '間隔 ${side.minFundingIntervalHours}h 未満は除外',
+            ),
             if (side.bandBreakoutEntryEnabled)
               _Condition(
                 '行きすぎ逆張り',

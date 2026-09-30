@@ -163,7 +163,6 @@ void main() {
     // EMA と価格を直接指定できるよう、EMA=100 になる系列を作る。
     final closes = [for (var i = 0; i < 199; i++) 100.0, 110.0];
     final config = StrategyConfig(
-      fundingFilterEnabled: false,
       short: const SideConfig.short().copyWith(
         emaPeriod: 1, // EMA(1) = 直近値なので乖離が出ない。
         rsiThreshold: 1,
@@ -178,6 +177,8 @@ void main() {
       series: seriesFrom(closes),
       contract: contract(),
       ticker: ticker(10000000),
+      // 資金調達のフィルタは常に効くので、負担のない率を渡しておく。
+      funding: funding(rate: 0.0001, cycle: 8),
     );
     // EMA(1) は価格そのものなので乖離ゼロ。利確幅が出ないので却下される。
     expect(result.rejectReason, RejectReason.profitTooSmall);
@@ -192,7 +193,6 @@ void main() {
     series.applyPrice(110, 900 * 200 + 10);
 
     final config = StrategyConfig(
-      fundingFilterEnabled: false,
       short: const SideConfig.short().copyWith(
         rsiThreshold: 1,
         bbSigma: 0.001,
@@ -206,6 +206,7 @@ void main() {
       series: series,
       contract: contract(),
       ticker: ticker(10000000),
+      funding: funding(rate: 0.0001, cycle: 8),
     );
 
     expect(result.isTriggered, isTrue, reason: '却下: ${result.rejectReason}');
@@ -301,7 +302,6 @@ void main() {
         takeProfitFactor: factor,
       );
       return StrategyConfig(
-        fundingFilterEnabled: false,
         short: direction.isShort ? side : const SideConfig.short(),
         long: direction.isShort ? const SideConfig.long() : side,
       );
@@ -387,20 +387,17 @@ void main() {
       expect(result.rejectReason, RejectReason.fundingUnknown);
     });
 
-    test('フィルタを切っていれば未取得でも通す', () {
-      final result = run(
-        config: const StrategyConfig(fundingFilterEnabled: false),
-        omitFunding: true,
+    test('フィルタは常に効く (切る設定は無い)', () {
+      const config = StrategyConfig();
+      expect(config.fundingFilterEnabled, isTrue);
+      // 保存データで切ろうとしても効かない。
+      expect(
+        StrategyConfig.fromJson({'fundingFilterEnabled': false})
+            .fundingFilterEnabled,
+        isTrue,
       );
-      expect(result.isTriggered, isTrue);
-    });
-
-    test('フィルタを切れば負担が大きくても通す', () {
-      final result = run(
-        config: const StrategyConfig(fundingFilterEnabled: false),
-        fundingInfo: funding(rate: -0.05, cycle: 1),
-      );
-      expect(result.isTriggered, isTrue);
+      // 利確を取引所へ預けるのも常に行う。
+      expect(config.attachTakeProfitToOrder, isTrue);
     });
   });
 
@@ -706,7 +703,6 @@ void main() {
     test('出来高の下限は方向ごとに効く', () {
       // ショートだけ下限を上げ、出来高がその間に入る銘柄を出す。
       final config = StrategyConfig(
-        fundingFilterEnabled: false,
         short: const SideConfig.short().copyWith(minAmount24Usdt: 90000000),
         long: const SideConfig.long().copyWith(minAmount24Usdt: 1000000),
       );

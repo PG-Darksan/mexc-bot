@@ -167,20 +167,18 @@ class StrategyEvaluator {
     }
 
     // 資金調達率のフィルタ。その方向が「支払う側」のときだけ効かせる。
-    if (config.fundingFilterEnabled) {
-      // まだ取れていない銘柄は、素通りさせずに見送る。
-      // 起動直後に調達間隔の短い銘柄へ入ってしまうのを防ぐ。
-      if (funding == null) {
-        return reject(RejectReason.fundingUnknown);
+    // まだ取れていない銘柄は、素通りさせずに見送る。
+    // 起動直後に調達間隔の短い銘柄へ入ってしまうのを防ぐ。
+    if (funding == null) {
+      return reject(RejectReason.fundingUnknown);
+    }
+    if (funding.paysFor(direction)) {
+      final burdenPercent = funding.burdenRateFor(direction) * 100;
+      if (burdenPercent > side.maxFundingBurdenPercent) {
+        return reject(RejectReason.fundingRateTooHigh);
       }
-      if (funding.paysFor(direction)) {
-        final burdenPercent = funding.burdenRateFor(direction) * 100;
-        if (burdenPercent > side.maxFundingBurdenPercent) {
-          return reject(RejectReason.fundingRateTooHigh);
-        }
-        if (funding.collectCycleHours < side.minFundingIntervalHours) {
-          return reject(RejectReason.fundingIntervalTooShort);
-        }
+      if (funding.collectCycleHours < side.minFundingIntervalHours) {
+        return reject(RejectReason.fundingIntervalTooShort);
       }
     }
 

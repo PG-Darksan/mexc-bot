@@ -6,6 +6,7 @@ import 'package:mexc_core/mexc_core.dart';
 import '../app.dart';
 import '../data/chart_data.dart';
 import 'format.dart';
+import 'price_chart.dart';
 
 /// 並べ替えの基準。
 enum _SortKey {
@@ -20,7 +21,7 @@ enum _SortKey {
   final IconData icon;
 }
 
-/// 銘柄一覧。出来高で絞り、24時間の動きで並べ替え、押すとチャートへ。
+/// 銘柄一覧。出来高で絞り、24時間の動きで並べ替え、押すとその場にチャート。
 ///
 /// ここに出すものは公開APIから端末が直接取る。鍵は要らない。
 class MarketPage extends StatefulWidget {
@@ -37,6 +38,15 @@ class _MarketPageState extends State<MarketPage> {
   /// 自動で取り直す間隔。ticker は 1 リクエストで全部返るので軽い。
   static const Duration _refreshEvery = Duration(seconds: 60);
 
+  /// その場に出すチャートで選べる時間軸。
+  static const List<Timeframe> _chartTimeframes = [
+    Timeframe.m5,
+    Timeframe.m15,
+    Timeframe.h1,
+    Timeframe.h4,
+    Timeframe.d1,
+  ];
+
   final ChartDataSource _source = ChartDataSource();
   final TextEditingController _search = TextEditingController();
 
@@ -47,6 +57,13 @@ class _MarketPageState extends State<MarketPage> {
   double _minVolumeM = 1;
   _SortKey _sort = _SortKey.gainers;
   Timer? _timer;
+
+  /// いまチャートを開いている銘柄。押した行のすぐ下に出す。
+  String? _openSymbol;
+  Timeframe _chartTimeframe = Timeframe.h1;
+  List<Candle> _candles = const [];
+  bool _chartLoading = false;
+  String? _chartError;
 
   @override
   void initState() {
@@ -78,11 +95,53 @@ class _MarketPageState extends State<MarketPage> {
         _fetchedAt = DateTime.now();
         _loading = false;
       });
+      // 開いているチャートも一緒に新しくする。
+      if (_openSymbol != null) unawaited(_loadCandles());
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _error = '$e';
         _loading = false;
+      });
+    }
+  }
+
+  /// 行を押したときの開け閉め。同じ行をもう一度押すと閉じる。
+  void _toggle(String symbol) {
+    setState(() {
+      if (_openSymbol == symbol) {
+        _openSymbol = null;
+        _candles = const [];
+        _chartError = null;
+        return;
+      }
+      _openSymbol = symbol;
+      _candles = const [];
+      _chartError = null;
+    });
+    if (_openSymbol != null) unawaited(_loadCandles());
+  }
+
+  Future<void> _loadCandles() async {
+    final symbol = _openSymbol;
+    if (symbol == null) return;
+    setState(() {
+      _chartLoading = true;
+      _chartError = null;
+    });
+    try {
+      final candles = await _source.klines(symbol, _chartTimeframe);
+      // 待っている間に別の銘柄へ切り替わっていたら捨てる。
+      if (!mounted || _openSymbol != symbol) return;
+      setState(() {
+        _candles = candles;
+        _chartLoading = false;
+      });
+    } catch (e) {
+      if (!mounted || _openSymbol != symbol) return;
+      setState(() {
+        _chartError = '$e';
+        _chartLoading = false;
       });
     }
   }
@@ -196,7 +255,7 @@ class _MarketPageState extends State<MarketPage> {
                     : '${rows.length} 銘柄 '
                           '(24h出来高 ${_minVolumeM.toStringAsFixed(0)}M USDT 以上'
                           '${_fetchedAt == null ? '' : ' / ${formatTimeShort(_fetchedAt)} 取得'})'
-                          '  押すとチャートが開きます',
+                          '  押すとその場にチャートが開きます',
                 style: theme.textTheme.bodySmall?.copyWith(
                   fontSize: 11,
                   color: _error != null ? theme.colorScheme.error : null,
@@ -215,13 +274,42 @@ class _MarketPageState extends State<MarketPage> {
               : ListView.separated(
                   itemCount: rows.length,
                   separatorBuilder: (_, _) => const Divider(height: 1),
-                  itemBuilder: (context, i) => _TickerRow(
-                    rank: i + 1,
-                    ticker: rows[i],
-                    held: held.contains(rows[i].symbol),
-                    sort: _sort,
-                    onTap: () => state.openChart(rows[i].symbol),
-                  ),
+                  itemBuilder: (context, i) {
+                    final ticker = rows[i];
+                    final open = _openSymbol == ticker.symbol;
+                    return Column(
+                      children: [
+                        _TickerRow(
+                          rank: i + 1,
+                          ticker: ticker,
+                          held: held.contains(ticker.symbol),
+                          open: open,
+                          onTap: () => _toggle(ticker.symbol),
+                        ),
+                        // 押した行のすぐ下にチャートを出す。
+                        if (open)
+                          _InlineChart(
+                            ticker: ticker,
+                            candles: _candles,
+                            loading: _chartLoading,
+                            error: _chartError,
+                            timeframe: _chartTimeframe,
+                            timeframes: _chartTimeframes,
+                            side: state.snapshot.config.primarySide,
+                            position: state.snapshot.positions
+                                .where((p) => p.symbol == ticker.symbol)
+                                .firstOrNull,
+                            onTimeframeChanged: (tf) {
+                              setState(() => _chartTimeframe = tf);
+                              unawaited(_loadCandles());
+                            },
+                            onRefresh: () => unawaited(_loadCandles()),
+                            onClose: () => _toggle(ticker.symbol),
+                            onOpenHome: () => state.openChart(ticker.symbol),
+                          ),
+                      ],
+                    );
+                  },
                 ),
         ),
       ],
@@ -283,14 +371,17 @@ class _TickerRow extends StatelessWidget {
     required this.rank,
     required this.ticker,
     required this.held,
-    required this.sort,
+    required this.open,
     required this.onTap,
   });
 
   final int rank;
   final TickerSnapshot ticker;
   final bool held;
-  final _SortKey sort;
+
+  /// この行のチャートを開いているか。開いている行は色を付ける。
+  final bool open;
+
   final VoidCallback onTap;
 
   @override
@@ -306,7 +397,10 @@ class _TickerRow extends StatelessWidget {
 
     return InkWell(
       onTap: onTap,
-      child: Padding(
+      child: Container(
+        color: open
+            ? theme.colorScheme.primary.withValues(alpha: 0.07)
+            : null,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
           children: [
@@ -402,13 +496,196 @@ class _TickerRow extends StatelessWidget {
             ),
             const SizedBox(width: 4),
             Icon(
-              Icons.chevron_right,
+              open ? Icons.expand_less : Icons.show_chart,
               size: 18,
-              color: theme.colorScheme.onSurfaceVariant,
+              color: open
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.onSurfaceVariant,
             ),
           ],
         ),
       ),
     );
   }
+}
+
+/// 押した行のすぐ下に出すチャート。
+///
+/// 建玉があれば建値・利確・買い足しの位置も引く。ラインを動かして
+/// 取引所へ送るのはホームのチャートの仕事なので、ここでは見るだけ。
+class _InlineChart extends StatelessWidget {
+  const _InlineChart({
+    required this.ticker,
+    required this.candles,
+    required this.loading,
+    required this.error,
+    required this.timeframe,
+    required this.timeframes,
+    required this.side,
+    required this.position,
+    required this.onTimeframeChanged,
+    required this.onRefresh,
+    required this.onClose,
+    required this.onOpenHome,
+  });
+
+  final TickerSnapshot ticker;
+  final List<Candle> candles;
+  final bool loading;
+  final String? error;
+  final Timeframe timeframe;
+  final List<Timeframe> timeframes;
+
+  /// バンドと EMA の期間に使う側 (代表の向き)。
+  final SideConfig side;
+
+  final ManagedPosition? position;
+  final ValueChanged<Timeframe> onTimeframeChanged;
+  final VoidCallback onRefresh;
+  final VoidCallback onClose;
+  final VoidCallback onOpenHome;
+
+  static const Map<Timeframe, String> _shortLabels = {
+    Timeframe.m5: '5m',
+    Timeframe.m15: '15m',
+    Timeframe.h1: '1h',
+    Timeframe.h4: '4h',
+    Timeframe.d1: '1D',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final p = position;
+
+    return Container(
+      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Wrap(
+                  spacing: 6,
+                  children: [
+                    for (final tf in timeframes)
+                      ChoiceChip(
+                        label: Text(
+                          _shortLabels[tf] ?? tf.label,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        selected: tf == timeframe,
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize:
+                            MaterialTapTargetSize.shrinkWrap,
+                        onSelected: (_) => onTimeframeChanged(tf),
+                      ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: '更新',
+                visualDensity: VisualDensity.compact,
+                icon: loading
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh, size: 16),
+                onPressed: loading ? null : onRefresh,
+              ),
+              IconButton(
+                tooltip: '閉じる',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.close, size: 16),
+                onPressed: onClose,
+              ),
+            ],
+          ),
+          if (error != null)
+            SizedBox(
+              height: 120,
+              child: Center(
+                child: Text(
+                  'チャートを取れませんでした\n$error',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+            )
+          else if (loading && candles.isEmpty)
+            const SizedBox(
+              height: 220,
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else
+            PriceChart(
+              candles: candles,
+              bbPeriod: side.bbPeriod,
+              bbSigma: side.bbSigma,
+              emaPeriod: side.emaPeriod,
+              height: 220,
+              lines: [
+                if (p != null) ...[
+                  PriceLine(
+                    price: p.entryPrice,
+                    label: '建値',
+                    color: Colors.grey,
+                    dashed: true,
+                  ),
+                  PriceLine(
+                    price: p.takeProfitPrice,
+                    label: '利確',
+                    color: Colors.green,
+                  ),
+                  if (p.stopLossPrice != null)
+                    PriceLine(
+                      price: p.stopLossPrice!,
+                      label: '損切り',
+                      color: Colors.red,
+                    ),
+                  if (p.hasPendingAddOn && p.addOnPrice != null)
+                    PriceLine(
+                      price: p.addOnPrice!,
+                      label: p.direction.isShort ? '売り足し' : '買い足し',
+                      color: Colors.amber,
+                      dashed: true,
+                    ),
+                ],
+              ],
+            ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '現在値 ${formatPrice(ticker.lastPrice)}  /  '
+                  'BB(${side.bbPeriod}) ${side.bbSigma}σ / '
+                  'EMA(${side.emaPeriod})'
+                  '${p == null ? '' : '  /  建値 ${formatPrice(p.entryPrice)}'}',
+                  style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
+                ),
+              ),
+              if (p != null)
+                TextButton.icon(
+                  onPressed: onOpenHome,
+                  icon: const Icon(Icons.open_in_new, size: 14),
+                  label: const Text(
+                    'ホームで利確を動かす',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+extension<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
 }

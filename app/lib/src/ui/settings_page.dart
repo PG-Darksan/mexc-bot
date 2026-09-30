@@ -353,32 +353,33 @@ class _SettingsPageState extends State<SettingsPage> {
                         (x) => x.copyWith(bandBreakoutPercent: v),
                       ),
                     ),
-                  if (draft.fundingFilterEnabled) ...[
-                    _PairField(
-                      title: '資金調達 負担率の上限 [%]',
-                      shortValue: draft.short.maxFundingBurdenPercent,
-                      longValue: draft.long.maxFundingBurdenPercent,
-                      onShortChanged: (v) => _updateShort(
-                        (x) => x.copyWith(maxFundingBurdenPercent: v),
-                      ),
-                      onLongChanged: (v) => _updateLong(
-                        (x) => x.copyWith(maxFundingBurdenPercent: v),
-                      ),
+                  _PairField(
+                    title: '資金調達 負担率の上限 [%]',
+                    shortValue: draft.short.maxFundingBurdenPercent,
+                    longValue: draft.long.maxFundingBurdenPercent,
+                    onShortChanged: (v) => _updateShort(
+                      (x) => x.copyWith(maxFundingBurdenPercent: v),
                     ),
-                    _PairField(
-                      title: '資金調達 間隔の下限 [時間]',
-                      integer: true,
-                      shortValue: draft.short.minFundingIntervalHours
-                          .toDouble(),
-                      longValue: draft.long.minFundingIntervalHours.toDouble(),
-                      onShortChanged: (v) => _updateShort(
-                        (x) => x.copyWith(minFundingIntervalHours: v.toInt()),
-                      ),
-                      onLongChanged: (v) => _updateLong(
-                        (x) => x.copyWith(minFundingIntervalHours: v.toInt()),
-                      ),
+                    onLongChanged: (v) => _updateLong(
+                      (x) => x.copyWith(maxFundingBurdenPercent: v),
                     ),
-                  ],
+                  ),
+                  _PairField(
+                    title: '資金調達 間隔の下限 [時間]',
+                    integer: true,
+                    shortValue: draft.short.minFundingIntervalHours.toDouble(),
+                    longValue: draft.long.minFundingIntervalHours.toDouble(),
+                    onShortChanged: (v) => _updateShort(
+                      (x) => x.copyWith(minFundingIntervalHours: v.toInt()),
+                    ),
+                    onLongChanged: (v) => _updateLong(
+                      (x) => x.copyWith(minFundingIntervalHours: v.toInt()),
+                    ),
+                  ),
+                  const _Hint(
+                    'この 2 つは、その向きが資金調達を「支払う側」のときだけ効きます。'
+                    '受け取る側なら率が大きくても見送りません。',
+                  ),
                   _PairSwitch(
                     title: '含み損が出たら買い足し / 売り足しする',
                     shortValue: draft.short.addOnEnabled,
@@ -419,82 +420,6 @@ class _SettingsPageState extends State<SettingsPage> {
                       '次の判定までの間 (最大で判定間隔ぶん) は残ることがあります。',
                     ),
                   ],
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () => _update(
-                            (c) => c.copyWith(long: c.short.mirrored()),
-                          ),
-                          child: const Text(
-                            'ショート → ロング',
-                            style: TextStyle(fontSize: 12),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () => _update(
-                            (c) => c.copyWith(short: c.long.mirrored()),
-                          ),
-                          child: const Text(
-                            'ロング → ショート',
-                            style: TextStyle(fontSize: 12),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const _Hint('そろえると、RSI のしきい値だけ 100 から引いた値になります。'),
-                ],
-              ),
-
-              _Section(
-                title: 'エントリーの出し方',
-                description: '成行・分離マージンで固定です。',
-                children: [
-                  const _Hint(
-                    '新規建ては成行だけです (指値は使いません)。'
-                    'マージンは分離マージンで固定です '
-                    '(損切りを置かないので、クロスは使いません)。\n'
-                    'レバレッジと証拠金は方向ごとの設定にあります。\n'
-                    'このボットは一方向モードで動きます。'
-                    '同じ銘柄に建玉があれば向きに関わらず新規を出さないので、'
-                    'ヘッジは使いません。'
-                    'MEXC 側も「一方向モード」にしてください。'
-                    '食い違うと決済注文が通らず、起動時に警告が出ます。',
-                  ),
-                ],
-              ),
-
-              _Section(
-                title: '利確の出し方',
-                description: '係数と下限は方向ごとの設定にあります。損切りは置きません。',
-                children: [
-                  _CompactSwitch(
-                    label: '発注と同時に利確を取引所へ預ける',
-                    subtitle: 'アプリやサーバーが落ちていても取引所側で利確されます。',
-                    value: draft.attachTakeProfitToOrder,
-                    onChanged: (v) =>
-                        _update((c) => c.copyWith(attachTakeProfitToOrder: v)),
-                  ),
-                ],
-              ),
-
-              _Section(
-                title: '資金調達率のフィルタ',
-                children: [
-                  _CompactSwitch(
-                    label: 'フィルタを使う',
-                    subtitle:
-                        'その方向が支払う側のときだけ効きます。'
-                        '負担率と間隔の基準は方向ごとの設定に。',
-                    value: draft.fundingFilterEnabled,
-                    onChanged: (v) =>
-                        _update((c) => c.copyWith(fundingFilterEnabled: v)),
-                  ),
                 ],
               ),
 
@@ -536,7 +461,11 @@ class _SettingsPageState extends State<SettingsPage> {
                   const _Hint(
                     '同時に持てる件数に上限はありません。'
                     'ただし建玉のある銘柄には、向きが同じでも違っても新規注文を出しません。'
-                    '決済してからは「再エントリー待ち」の間だけ間を置きます。',
+                    '決済してからは「再エントリー待ち」の間だけ間を置きます。\n'
+                    '新規建ては成行・分離マージン、利確は発注と同時に取引所へ預け、'
+                    '資金調達率のフィルタは常に効きます (切り替えはありません)。\n'
+                    'MEXC 側も「一方向モード」にしてください。'
+                    '食い違うと決済注文が通らず、起動時に警告が出ます。',
                   ),
                   _CompactSwitch(
                     label: '同じ足では1回だけ発火させる',

@@ -141,7 +141,8 @@ class TradeExecutor {
       type: config.orderTypeValue,
       openType: config.openType,
       leverage: side.leverage,
-      takeProfitPrice: config.attachTakeProfitToOrder ? takeProfit : null,
+      // 利確は必ず発注と同時に取引所へ預ける。落ちていても決済される。
+      takeProfitPrice: takeProfit,
       positionMode: config.positionModeValue,
       externalOid: id,
     );
