@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'src/app.dart';
+import 'src/notify/trade_notifier.dart';
 import 'src/settings/settings_store.dart';
 import 'src/state/app_state.dart';
 
@@ -29,7 +30,7 @@ Future<void> main() async {
   }
 
   final store = SettingsStore();
-  final state = AppState(store);
+  final state = AppState(store, notifier: TradeNotifier());
   runApp(MexcBotApp(state: state));
   await state.initialize();
 }

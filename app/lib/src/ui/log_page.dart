@@ -88,10 +88,13 @@ class _LogPageState extends State<LogPage> {
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          SizedBox(
-                            width: 68,
+                          // 時刻は長さが決まっているので、幅を決め打ちにせず
+                          // 折り返さないことだけ決める (文字の大きい端末で崩れない)。
+                          Padding(
+                            padding: const EdgeInsets.only(right: 6),
                             child: Text(
                               formatTimeShort(e.time),
+                              softWrap: false,
                               style: TextStyle(
                                 fontSize: 12,
                                 fontFamily: 'monospace',

@@ -2,6 +2,8 @@
     <!-- 取引所APIとWebSocketに繋ぐために必要。 -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- 建てたとき・決済したときの通知 (Android 13 以降は利用者の許可も要る)。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
     <application
         android:label="MEXC 自動売買"

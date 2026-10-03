@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:mexc_core/mexc_core.dart';
 
 import '../data/account_data.dart';
+import '../notify/trade_notifier.dart';
 import '../settings/app_settings.dart';
 import '../settings/settings_store.dart';
 
@@ -22,9 +23,13 @@ class ChartRequest {
 /// ローカル実行とサーバー接続を同じ口 ([BotController]) で扱い、
 /// 画面はこのクラスだけを見る。
 class AppState extends ChangeNotifier {
-  AppState(this._store);
+  AppState(this._store, {TradeNotifier? notifier}) : _notifier = notifier;
 
   final SettingsStore _store;
+
+  /// 建てた / 決済したときに端末の通知を出す。テストでは渡さない。
+  final TradeNotifier? _notifier;
+  final PositionChangeTracker _changes = PositionChangeTracker();
 
   AppSettings _settings = const AppSettings();
   StrategyConfig _config = const StrategyConfig();
@@ -90,13 +95,16 @@ class AppState extends ChangeNotifier {
     _snapshot = BotSnapshot.initial(_config);
     _initialized = true;
     notifyListeners();
+    await _notifier?.initialize();
 
     await _rebuildController();
 
-    if (_settings.autoStartBot) {
+    if (isLocalMode && _settings.wasRunning) {
+      // 前回「停止」を押さずに終わった (閉じた・落ちた) ので、続きから動かす。
+      // サーバー接続では、サーバーが自分で動き続けている。
       await start();
     } else if (_credentials.apiKey.isNotEmpty) {
-      // 起動しない設定でも、口座の中身は最初に一度見せる。
+      // 動かしていなくても、口座の中身は最初に一度見せる。
       await refreshAccount();
     }
 
@@ -162,10 +170,13 @@ class AppState extends ChangeNotifier {
 
     _controller = controller;
     _rebuildAccountSource();
+    // 繋ぎ先が変わったので、建玉の覚えを取り直す (前からある分は知らせない)。
+    _changes.reset();
     _snapshotSub = controller.snapshots.listen((s) {
       _snapshot = s;
       // サーバー側の設定を正とする。
       if (!controller.isLocal) _config = s.config;
+      _notifyTrades(s);
       notifyListeners();
     });
     _eventSub = controller.events.listen(_addEvent);
@@ -189,14 +200,38 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 建てた / 決済したことを、端末の通知で知らせる。
+  void _notifyTrades(BotSnapshot snapshot) {
+    final notifier = _notifier;
+    if (notifier == null) return;
+    final changes = _changes.update(snapshot);
+    for (final p in changes.opened) {
+      unawaited(notifier.show(openedMessage(p)));
+    }
+    for (final p in changes.closed) {
+      unawaited(notifier.show(closedMessage(p)));
+    }
+  }
+
   Future<void> start() async {
     await _controller?.start();
+    await _rememberRunning(true);
     notifyListeners();
   }
 
   Future<void> stop() async {
     await _controller?.stop();
+    await _rememberRunning(false);
     notifyListeners();
+  }
+
+  /// ローカル実行では「開始」から「停止」までを覚えておく。アプリを閉じたり
+  /// 落ちたりしても、次に開いたとき続きから動かすため。
+  /// サーバー接続ではサーバーが覚えているので、ここでは何もしない。
+  Future<void> _rememberRunning(bool running) async {
+    if (!isLocalMode || _settings.wasRunning == running) return;
+    _settings = _settings.copyWith(wasRunning: running);
+    await _store.saveAppSettings(_settings);
   }
 
   Future<void> closePosition(String id) async {
@@ -277,6 +312,8 @@ class AppState extends ChangeNotifier {
 
   Future<void> updateAppSettings(AppSettings settings) async {
     final modeChanged = settings.mode != _settings.mode;
+    // 動かし方を変えるとローカルのボットは止まるので、続きから動かす印も消す。
+    if (modeChanged) settings = settings.copyWith(wasRunning: false);
     final connectionChanged =
         settings.serverUrl != _settings.serverUrl ||
         settings.serverToken != _settings.serverToken;

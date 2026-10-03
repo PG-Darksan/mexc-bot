@@ -40,13 +40,18 @@ void main() {
         mode: RunMode.remote,
         serverUrl: 'wss://example.com/ws',
         serverToken: 'secret',
-        autoStartBot: true,
+        wasRunning: true,
       );
       final restored = AppSettings.fromJson(settings.toJson());
       expect(restored.mode, RunMode.remote);
       expect(restored.serverUrl, 'wss://example.com/ws');
       expect(restored.serverToken, 'secret');
-      expect(restored.autoStartBot, isTrue);
+      expect(restored.wasRunning, isTrue);
+    });
+
+    test('以前の「起動と同時に動かす」がオンなら、続きから動かす', () {
+      final restored = AppSettings.fromJson({'autoStartBot': true});
+      expect(restored.wasRunning, isTrue);
     });
   });
 }

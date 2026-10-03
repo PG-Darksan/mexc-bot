@@ -435,9 +435,9 @@ class _SideConditions extends StatelessWidget {
             ),
             if (side.bandBreakoutEntryEnabled)
               _Condition(
-                '行きすぎ逆張り',
-                '${isShort ? "+" : "-"}${side.bbSigma}σ から '
-                    '${side.bandBreakoutPercent}% 離れたら RSI を見ない',
+                '飛び出し',
+                '${isShort ? "+" : "-"}${side.bbSigma}σ のバンドより '
+                    '${side.bandBreakoutPercent}% 以上外なら RSI を待たずに入る',
               ),
           ],
         ),

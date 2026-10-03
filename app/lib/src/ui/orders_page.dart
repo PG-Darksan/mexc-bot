@@ -247,42 +247,44 @@ class _OrderTile extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 4),
-        _Line('建てた時刻', formatTime(position.openedAt)),
-        _Line('建値', formatPrice(position.entryPrice)),
-        _Line('数量', '${position.vol} 枚'),
-        _Line('利確', formatPrice(position.takeProfitPrice)),
-        if (position.stopLossPrice != null)
-          _Line('損切り', formatPrice(position.stopLossPrice)),
-        if (position.addOnOrderId != null)
+        _Lines([
+          _Line('建てた時刻', formatTime(position.openedAt)),
+          _Line('建値', formatPrice(position.entryPrice)),
+          _Line('数量', '${position.vol} 枚'),
+          _Line('利確', formatPrice(position.takeProfitPrice)),
+          if (position.stopLossPrice != null)
+            _Line('損切り', formatPrice(position.stopLossPrice)),
+          if (position.addOnOrderId != null)
+            _Line(
+              isShort ? '売り足し' : '買い足し',
+              '${position.addOnVol ?? '-'} 枚 @ ${formatPrice(position.addOnPrice)} '
+                  '(${position.addOnFilled ? "約定済み・建値は平均後" : "指値で待機中"})',
+              color: position.addOnFilled ? Colors.green : Colors.amber.shade800,
+            ),
+          if (open && markPrice != null) _Line('現在値', formatPrice(markPrice)),
+          if (open && pnl != null)
+            _Line(
+              '評価損益',
+              formatPnl(pnl),
+              color: pnl! >= 0 ? Colors.green : Colors.red,
+            ),
+          if (!open) ...[
+            _Line('決済した時刻', formatTime(position.closedAt)),
+            _Line('決済した値段', formatPrice(position.closePrice)),
+            _Line(
+              '損益',
+              formatPnl(position.realizedPnl),
+              color: (position.realizedPnl ?? 0) >= 0 ? Colors.green : Colors.red,
+            ),
+          ],
           _Line(
-            isShort ? '売り足し' : '買い足し',
-            '${position.addOnVol ?? '-'} 枚 @ ${formatPrice(position.addOnPrice)} '
-                '(${position.addOnFilled ? "約定済み・建値は平均後" : "指値で待機中"})',
-            color: position.addOnFilled ? Colors.green : Colors.amber.shade800,
+            '備考',
+            [
+              position.timeframe.label,
+              if (position.note != null) position.note!,
+            ].join(' / '),
           ),
-        if (open && markPrice != null) _Line('現在値', formatPrice(markPrice)),
-        if (open && pnl != null)
-          _Line(
-            '評価損益',
-            formatPnl(pnl),
-            color: pnl! >= 0 ? Colors.green : Colors.red,
-          ),
-        if (!open) ...[
-          _Line('決済した時刻', formatTime(position.closedAt)),
-          _Line('決済した値段', formatPrice(position.closePrice)),
-          _Line(
-            '損益',
-            formatPnl(position.realizedPnl),
-            color: (position.realizedPnl ?? 0) >= 0 ? Colors.green : Colors.red,
-          ),
-        ],
-        _Line(
-          '備考',
-          [
-            position.timeframe.label,
-            if (position.note != null) position.note!,
-          ].join(' / '),
-        ),
+        ]),
       ],
     );
   }
@@ -314,42 +316,61 @@ class _Tag extends StatelessWidget {
   }
 }
 
-class _Line extends StatelessWidget {
+/// 項目名と値の 1 行分。
+class _Line {
   const _Line(this.label, this.value, {this.color});
 
   final String label;
   final String value;
   final Color? color;
+}
+
+/// 項目名と値を表にして並べる。
+///
+/// 項目名の列は一番長い項目名に合わせ、項目名は折り返さない。幅を
+/// 決め打ちにすると、文字の大きい端末で「決済した時/刻」のように途中で
+/// 折り返してしまうため。
+class _Lines extends StatelessWidget {
+  const _Lines(this.lines);
+
+  final List<_Line> lines;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 2),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 68,
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+    final labelColor = Theme.of(context).colorScheme.onSurfaceVariant;
+    return Table(
+      columnWidths: const {
+        0: IntrinsicColumnWidth(),
+        1: FlexColumnWidth(),
+      },
+      defaultVerticalAlignment: TableCellVerticalAlignment.baseline,
+      textBaseline: TextBaseline.alphabetic,
+      children: [
+        for (final line in lines)
+          TableRow(
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(right: 12, bottom: 2),
+                child: Text(
+                  line.label,
+                  softWrap: false,
+                  style: TextStyle(fontSize: 12, color: labelColor),
+                ),
               ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: color,
+              Padding(
+                padding: const EdgeInsets.only(bottom: 2),
+                child: Text(
+                  line.value,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: line.color,
+                  ),
+                ),
               ),
-            ),
+            ],
           ),
-        ],
-      ),
+      ],
     );
   }
 }

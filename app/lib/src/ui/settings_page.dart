@@ -80,15 +80,16 @@ class _SettingsPageState extends State<SettingsPage> {
 
   /// 保存する画面設定を組む。
   ///
-  /// URL とトークンは入力欄から取る。明るさだけは、この画面の写し
-  /// (開いたときのまま) ではなく、いまの値を引き継ぐ。明るさは上の
-  /// ボタンで変えるので写しが古くなっており、そのまま書き戻すと
-  /// 動かし方を触ったとたんに明るさが元に戻ってしまう。
+  /// この画面で変えるのは動かし方・URL・トークンだけ (URL とトークンは
+  /// 入力欄から取る)。ほかの値 (明るさ・ボットを動かしたまま終わったか) は
+  /// ほかの所で変わるので、この画面の写し (開いたときのまま) ではなく、
+  /// いまの値を引き継ぐ。写しのまま書き戻すと、動かし方を触ったとたんに
+  /// 明るさなどが元に戻ってしまう。
   AppSettings _settingsToSave(AppState state, AppSettings next) =>
-      next.copyWith(
+      state.settings.copyWith(
+        mode: next.mode,
         serverUrl: _serverUrlController.text.trim(),
         serverToken: _serverTokenController.text.trim(),
-        themeMode: state.settings.themeMode,
       );
 
   /// 動かし方まわりは、切り替えたその場で覚える。
@@ -170,7 +171,7 @@ class _SettingsPageState extends State<SettingsPage> {
     ).showSnackBar(const SnackBar(content: Text('設定を保存しました')));
   }
 
-  /// 「行きすぎ」の決め方を、いまの値で言葉にする。入れている向きだけ出す。
+  /// 飛び出しで入る条件を、いまの値で言葉にする。入れている向きだけ出す。
   String _breakoutHint() {
     final parts = [
       if (draft.short.bandBreakoutEntryEnabled)
@@ -180,8 +181,10 @@ class _SettingsPageState extends State<SettingsPage> {
         'ロングは -${_trimNumber(draft.long.bbSigma)}σ のバンドより '
             '${_trimNumber(draft.long.bandBreakoutPercent)}% 以上安く',
     ];
-    return '${parts.join('、')}なったら、RSI を見ずに入ります。'
-        '% はバンドの価格に対する割合です。';
+    return 'いまの値: ${parts.join('、')}なったら入ります '
+        '(% はバンドの価格に対する割合)。\n'
+        'このときの利確は、バンドまでの距離に「利確の係数」を掛けた分だけ'
+        '戻った所です (0.5 なら半分戻った所)。';
   }
 
   @override
@@ -361,7 +364,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                       ),
                       _PairSwitch(
-                        title: '行きすぎたら RSI を見ない',
+                        title: '大きく飛び出したら RSI を待たずに入る',
                         shortValue: draft.short.bandBreakoutEntryEnabled,
                         longValue: draft.long.bandBreakoutEntryEnabled,
                         onShortChanged: (v) => _updateShort(
@@ -371,10 +374,16 @@ class _SettingsPageState extends State<SettingsPage> {
                           (x) => x.copyWith(bandBreakoutEntryEnabled: v),
                         ),
                       ),
+                      const _Hint(
+                        'ふつうは「RSI がしきい値に届く」と「±σ のバンドを抜ける」が'
+                        'そろったときに入ります。オンにすると、急騰・急落で価格が'
+                        'バンドの外へ大きく飛び出したときは、RSI がしきい値に'
+                        '届いていなくても入ります。',
+                      ),
                       if (draft.short.bandBreakoutEntryEnabled ||
                           draft.long.bandBreakoutEntryEnabled) ...[
                         _PairField(
-                          title: '行きすぎの基準 (±σ のバンドから外へ離れた割合)',
+                          title: 'バンドの外へ何 % 飛び出したら入るか',
                           shortSuffix: '% 以上',
                           longSuffix: '% 以上',
                           shortValue: draft.short.bandBreakoutPercent,
@@ -614,13 +623,12 @@ class _SettingsPageState extends State<SettingsPage> {
                           'ローカル実行のままにしてください。',
                         ),
                       ],
-                      _CompactSwitch(
-                        label: 'アプリ起動と同時にボットを動かす',
-                        subtitle: '入れておくと、開いた瞬間から本番の注文が出ます。',
-                        value: appDraft.autoStartBot,
-                        onChanged: (v) => _changeAppSettings(
-                          (s) => s.copyWith(autoStartBot: v),
-                        ),
+                      const _Hint(
+                        '「開始」を押すと、「停止」を押すまで動き続けます。'
+                        'サーバー接続では、アプリを閉じても落ちてもサーバーで'
+                        '動き続けます。ローカル実行では、アプリが終わると止まり'
+                        'ますが (Windows はウィンドウを閉じてもトレイで動き'
+                        '続けます)、次に開いたとき続きから動きます。',
                       ),
                     ],
                   ),

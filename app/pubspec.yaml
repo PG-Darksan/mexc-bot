@@ -1,7 +1,7 @@
 name: mexc_bot_app
 description: MEXC USDT無期限先物の自動売買クライアント (Windows / Android)
 publish_to: 'none'
-version: 0.1.14+15
+version: 0.1.15+16
 
 environment:
   sdk: ^3.11.0
@@ -10,8 +10,10 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
+  flutter_local_notifications: ^17.2.4
   flutter_secure_storage: ^9.2.4
   intl: ^0.20.2
+  local_notifier: ^0.1.6
   mexc_core:
     path: ../packages/mexc_core
   shared_preferences: ^2.3.5
