@@ -39,7 +39,10 @@ class _MexcBotAppState extends State<MexcBotApp> {
   }
 
   void _onStateChanged() {
-    final keep = widget.state.settings.keepRunningInTray;
+    // ローカル実行ではボットがアプリの中で動いているので、閉じてもトレイに
+    // 残して動かし続ける。サーバー接続ではボットはサーバーで動いているので、
+    // 閉じたらそのまま終わってよい。
+    final keep = widget.state.isLocalMode;
     if (!_trayReady) {
       _trayReady = true;
       _lastKeepInTray = keep;

@@ -156,7 +156,6 @@ class AppState extends ChangeNotifier {
       controller = RemoteBotController(
         serverUrl: _settings.serverUrl,
         token: _settings.serverToken,
-        allowSelfSignedCertificate: _settings.allowSelfSignedCertificate,
         initialConfig: _config,
       );
     }
@@ -280,9 +279,7 @@ class AppState extends ChangeNotifier {
     final modeChanged = settings.mode != _settings.mode;
     final connectionChanged =
         settings.serverUrl != _settings.serverUrl ||
-        settings.serverToken != _settings.serverToken ||
-        settings.allowSelfSignedCertificate !=
-            _settings.allowSelfSignedCertificate;
+        settings.serverToken != _settings.serverToken;
     _settings = settings;
     await _store.saveAppSettings(settings);
     notifyListeners();

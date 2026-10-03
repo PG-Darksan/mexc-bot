@@ -33,8 +33,6 @@ void main() {
     test('既定はローカル実行', () {
       const settings = AppSettings();
       expect(settings.mode, RunMode.local);
-      expect(settings.allowSelfSignedCertificate, isFalse);
-      expect(settings.keepRunningInTray, isTrue);
     });
 
     test('JSON と往復できる', () {

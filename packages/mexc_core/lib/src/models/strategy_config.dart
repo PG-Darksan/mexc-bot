@@ -240,12 +240,12 @@ class SideConfig {
       errors.add('$name: 利確係数は 0 より大きく 1 未満にしてください。');
     }
     if (bandBreakoutEntryEnabled && bandBreakoutPercent <= 0) {
-      errors.add('$name: バンドからの乖離幅は 0 より大きい値にしてください。');
+      errors.add('$name: 行きすぎの基準 (σ のバンドから離れた割合) は 0 より大きい値にしてください。');
     }
     if (direction.isLong &&
         bandBreakoutEntryEnabled &&
         bandBreakoutPercent >= 100) {
-      errors.add('$name: バンドからの乖離幅は 100% 未満にしてください。');
+      errors.add('$name: 行きすぎの基準 (σ のバンドから離れた割合) は 100% 未満にしてください。');
     }
     if (addOnEnabled) {
       if (addOnLossPercent <= 0) {

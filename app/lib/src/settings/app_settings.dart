@@ -16,8 +16,6 @@ class AppSettings {
     this.mode = RunMode.local,
     this.serverUrl = 'ws://127.0.0.1:8080/ws',
     this.serverToken = '',
-    this.allowSelfSignedCertificate = false,
-    this.keepRunningInTray = true,
     this.autoStartBot = false,
     this.themeMode = AppThemeMode.system,
   });
@@ -25,12 +23,6 @@ class AppSettings {
   final RunMode mode;
   final String serverUrl;
   final String serverToken;
-
-  /// 自己署名証明書を許可するか。本番では false のままにする。
-  final bool allowSelfSignedCertificate;
-
-  /// Windows でウィンドウを閉じてもタスクトレイに常駐させるか。
-  final bool keepRunningInTray;
 
   /// アプリ起動時にボットも起動するか。
   final bool autoStartBot;
@@ -42,17 +34,12 @@ class AppSettings {
     RunMode? mode,
     String? serverUrl,
     String? serverToken,
-    bool? allowSelfSignedCertificate,
-    bool? keepRunningInTray,
     bool? autoStartBot,
     AppThemeMode? themeMode,
   }) => AppSettings(
     mode: mode ?? this.mode,
     serverUrl: serverUrl ?? this.serverUrl,
     serverToken: serverToken ?? this.serverToken,
-    allowSelfSignedCertificate:
-        allowSelfSignedCertificate ?? this.allowSelfSignedCertificate,
-    keepRunningInTray: keepRunningInTray ?? this.keepRunningInTray,
     autoStartBot: autoStartBot ?? this.autoStartBot,
     themeMode: themeMode ?? this.themeMode,
   );
@@ -61,8 +48,6 @@ class AppSettings {
     'mode': mode.name,
     'serverUrl': serverUrl,
     'serverToken': serverToken,
-    'allowSelfSignedCertificate': allowSelfSignedCertificate,
-    'keepRunningInTray': keepRunningInTray,
     'autoStartBot': autoStartBot,
     'themeMode': themeMode.name,
   };
@@ -74,9 +59,6 @@ class AppSettings {
     ),
     serverUrl: json['serverUrl'] as String? ?? 'ws://127.0.0.1:8080/ws',
     serverToken: json['serverToken'] as String? ?? '',
-    allowSelfSignedCertificate:
-        json['allowSelfSignedCertificate'] as bool? ?? false,
-    keepRunningInTray: json['keepRunningInTray'] as bool? ?? true,
     autoStartBot: json['autoStartBot'] as bool? ?? false,
     themeMode: AppThemeMode.values.firstWhere(
       (e) => e.name == json['themeMode'],
