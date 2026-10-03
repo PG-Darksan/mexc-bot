@@ -10,6 +10,10 @@ abstract class BotStateStore {
   Future<void> saveConfig(StrategyConfig config);
   Future<List<ManagedPosition>> loadPositions();
   Future<void> savePositions(List<ManagedPosition> positions);
+
+  /// アプリから最後に「開始」したか「停止」したか。一度も無ければ null。
+  Future<bool?> loadRunning();
+  Future<void> saveRunning(bool running);
 }
 
 /// JSON ファイルに書き出す実装。サーバー常駐時に使う。
@@ -23,6 +27,7 @@ class FileBotStateStore implements BotStateStore {
 
   File get _configFile => File('${directory.path}/config.json');
   File get _positionsFile => File('${directory.path}/positions.json');
+  File get _runningFile => File('${directory.path}/running.json');
 
   Future<void> _ensureDirectory() async {
     if (!await directory.exists()) {
@@ -69,5 +74,22 @@ class FileBotStateStore implements BotStateStore {
     await _positionsFile.writeAsString(
       jsonEncode(positions.map((p) => p.toJson()).toList()),
     );
+  }
+
+  @override
+  Future<bool?> loadRunning() async {
+    try {
+      if (!await _runningFile.exists()) return null;
+      final json = jsonDecode(await _runningFile.readAsString()) as Map;
+      return json['running'] as bool?;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> saveRunning(bool running) async {
+    await _ensureDirectory();
+    await _runningFile.writeAsString(jsonEncode({'running': running}));
   }
 }

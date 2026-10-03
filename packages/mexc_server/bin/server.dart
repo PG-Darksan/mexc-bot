@@ -89,8 +89,11 @@ Future<void> main(List<String> args) async {
     _log('実発注モードで起動しました。条件が成立すると実際に注文を出します。');
   }
 
-  // 自動起動。停止状態で待つなら BOT_AUTOSTART=0 を指定する。
-  if (Platform.environment['BOT_AUTOSTART'] != '0') {
+  // アプリから最後に押した「開始 / 停止」を引き継ぐ。「停止」したまま
+  // サーバーが立ち上がり直しても、勝手に動き出さないようにするため。
+  // まだ一度も押していなければ BOT_AUTOSTART に従う (0 なら止めて待つ)。
+  final savedRunning = await store.loadRunning();
+  if (savedRunning ?? Platform.environment['BOT_AUTOSTART'] != '0') {
     await engine.start();
   }
 
@@ -308,8 +311,10 @@ class BotServer {
       switch (message.type) {
         case ClientCommandType.start:
           await engine.start();
+          await store.saveRunning(true);
         case ClientCommandType.stop:
           await engine.stop();
+          await store.saveRunning(false);
         case ClientCommandType.updateConfig:
           final config = StrategyConfig.fromJson(message.payload);
           final errors = config.validate();
