@@ -65,3 +65,18 @@ class MexcNetworkException implements Exception {
   @override
   String toString() => 'MexcNetworkException($endpoint): $message';
 }
+
+/// 注文が取引所で通ったかどうか、こちらでは分からないとき。
+///
+/// 送ったあとで通信が切れた・応答を待ちきれなかった・MEXC が内部エラーを
+/// 返した、のどれかで起きる。送り直すと同じ注文が二重に入るおそれがあるので、
+/// 送り直さずにこれを投げる。通ったかどうかは取引所の建玉で確かめる。
+class MexcOrderUnknownException implements Exception {
+  MexcOrderUnknownException(this.message, {this.endpoint});
+
+  final String message;
+  final String? endpoint;
+
+  @override
+  String toString() => 'MexcOrderUnknownException($endpoint): $message';
+}

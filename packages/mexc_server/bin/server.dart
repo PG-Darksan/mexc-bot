@@ -82,10 +82,6 @@ Future<void> main(List<String> args) async {
   if (hosts.isEmpty) hosts.add('0.0.0.0');
   await server.listen(hosts: hosts, port: port);
 
-  _log(
-    '待ち受け開始: ${hosts.map((h) => 'http://$h:$port').join(' / ')}'
-    '  (WebSocket: /ws)',
-  );
   if (apiKey == null || apiSecret == null) {
     _log('警告: MEXC_API_KEY / MEXC_API_SECRET が未設定です。'
         '判定だけ行い、注文は出しません。');
@@ -132,6 +128,10 @@ class BotServer {
   final Set<_Client> _clients = {};
   final List<BotEvent> _recentEvents = [];
   final List<HttpServer> _httpServers = [];
+
+  /// 待ち受けに失敗したアドレスごとの、やり直しの時計。
+  final Map<String, Timer> _retryTimers = {};
+  bool _disposed = false;
   StreamSubscription<BotSnapshot>? _snapshotSub;
   StreamSubscription<BotEvent>? _eventSub;
   Timer? _saveTimer;
@@ -188,9 +188,37 @@ class BotServer {
         .handler;
 
     for (final host in hosts) {
-      _httpServers.add(await shelf_io.serve(router, host, port));
+      await _serve(router, host, port);
     }
   }
+
+  /// [host] で待ち受ける。
+  ///
+  /// 127.0.0.1 などで待ち受けられないのは、同じポートに前のボットが残って
+  /// いるとき。2 台目まで動かすと注文が二重に出るので、起動を止める (例外を
+  /// そのまま投げる)。Tailscale などのアドレスは、サーバーの起動直後には
+  /// まだ割り当てられていないことがある。それで落ちると売買まで止まって
+  /// しまうので、知らせて 30 秒ごとに待ち受け直す。
+  Future<void> _serve(Handler handler, String host, int port) async {
+    if (_disposed) return;
+    try {
+      _httpServers.add(await shelf_io.serve(handler, host, port));
+      _retryTimers.remove(host);
+      _log('待ち受け開始: http://$host:$port  (WebSocket: /ws)');
+    } on SocketException catch (e) {
+      if (_mustListen(host)) rethrow;
+      _log('$host:$port で待ち受けられません (${e.message})。30 秒後にやり直します。');
+      _retryTimers[host] = Timer(const Duration(seconds: 30), () {
+        unawaited(_serve(handler, host, port));
+      });
+    }
+  }
+
+  static bool _mustListen(String host) =>
+      host == '127.0.0.1' ||
+      host == 'localhost' ||
+      host == '::1' ||
+      host == '0.0.0.0';
 
   void _handleConnection(WebSocketChannel channel) {
     final client = _Client(channel);
@@ -389,6 +417,11 @@ class BotServer {
   }
 
   Future<void> dispose() async {
+    _disposed = true;
+    for (final timer in _retryTimers.values) {
+      timer.cancel();
+    }
+    _retryTimers.clear();
     _saveTimer?.cancel();
     await _persist();
     await _snapshotSub?.cancel();

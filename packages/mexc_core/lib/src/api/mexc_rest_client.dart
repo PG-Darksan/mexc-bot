@@ -265,7 +265,13 @@ class MexcRestClient {
       if (externalOid != null) 'externalOid': externalOid,
       if (reduceOnly != null) 'reduceOnly': reduceOnly,
     };
-    final data = await _privatePost('/api/v1/private/order/create', body);
+    // 新規注文は送り直さない。通ったかどうか分からないまま送り直すと、
+    // 同じ注文が二重に入る (分からないときは MexcOrderUnknownException)。
+    final data = await _privatePost(
+      '/api/v1/private/order/create',
+      body,
+      resend: false,
+    );
     if (data is Map<String, dynamic>) {
       return OrderResult(
         orderId: '${data['orderId']}',
@@ -363,12 +369,19 @@ class MexcRestClient {
     return _send(() => _http.get(uri, headers: headers), path);
   }
 
-  Future<dynamic> _privatePost(String path, Map<String, dynamic> body) =>
-      _privatePostRaw(path, body);
+  Future<dynamic> _privatePost(
+    String path,
+    Map<String, dynamic> body, {
+    bool resend = true,
+  }) => _privatePostRaw(path, body, resend: resend);
 
   /// POST は「署名した文字列」と「送るボディ」を完全に同一にする必要がある。
   /// 再シリアライズするとキー順や空白が変わって 602 になる。
-  Future<dynamic> _privatePostRaw(String path, Object body) async {
+  Future<dynamic> _privatePostRaw(
+    String path,
+    Object body, {
+    bool resend = true,
+  }) async {
     _requireCredentials();
     final payload = jsonEncode(body);
     final headers = _signedHeaders(payload);
@@ -376,6 +389,7 @@ class MexcRestClient {
     return _send(
       () => _http.post(uri, headers: headers, body: payload),
       path,
+      resend: resend,
     );
   }
 
@@ -402,21 +416,36 @@ class MexcRestClient {
     };
   }
 
+  /// [resend] が false の要求 (新規注文) は、取引所で通ったかどうか分からない
+  /// 失敗 (通信切れ・待ちきれない・MEXC の内部エラー) では送り直さず、
+  /// [MexcOrderUnknownException] を投げる。署名の有効時間 (Recv-Window) の
+  /// 内なら送り直しも受け付けられてしまい、二重に建つため。
+  /// レート制限 (429 / 510) は取引所が受け付けていないので、送り直してよい。
   Future<dynamic> _send(
     Future<http.Response> Function() request,
     String endpoint, {
     int attempt = 0,
+    bool resend = true,
   }) async {
     http.Response response;
     try {
       response = await request().timeout(timeout);
     } on TimeoutException {
+      if (!resend) {
+        throw MexcOrderUnknownException(
+          '応答を待ちきれませんでした。',
+          endpoint: endpoint,
+        );
+      }
       if (attempt < 2) {
         await Future<void>.delayed(Duration(milliseconds: 400 * (attempt + 1)));
         return _send(request, endpoint, attempt: attempt + 1);
       }
       throw MexcNetworkException('タイムアウトしました。', endpoint: endpoint);
     } catch (e) {
+      if (!resend) {
+        throw MexcOrderUnknownException('$e', endpoint: endpoint);
+      }
       if (attempt < 2) {
         await Future<void>.delayed(Duration(milliseconds: 400 * (attempt + 1)));
         return _send(request, endpoint, attempt: attempt + 1);
@@ -427,7 +456,7 @@ class MexcRestClient {
     if (response.statusCode == 429) {
       if (attempt < 3) {
         await Future<void>.delayed(Duration(seconds: 1 << attempt));
-        return _send(request, endpoint, attempt: attempt + 1);
+        return _send(request, endpoint, attempt: attempt + 1, resend: resend);
       }
       throw MexcApiException(
         code: 510,
@@ -456,13 +485,18 @@ class MexcRestClient {
         endpoint: endpoint,
         httpStatus: response.statusCode,
       );
+      // 内部エラー・混雑は、注文が通ったあとで返ることもある。新規注文は
+      // 送り直さず、通ったかどうか分からないものとして扱う。
+      if (!resend && (code == 500 || code == 501)) {
+        throw MexcOrderUnknownException(error.description, endpoint: endpoint);
+      }
       if (error.isRetryable && attempt < 4) {
         // レート超過は間を広めに取る。詰めて叩き直すと状況が悪化する。
         final backoff = error.isRateLimited
             ? Duration(seconds: 2 << attempt)
             : Duration(seconds: 1 << attempt);
         await Future<void>.delayed(backoff);
-        return _send(request, endpoint, attempt: attempt + 1);
+        return _send(request, endpoint, attempt: attempt + 1, resend: resend);
       }
       throw error;
     }

@@ -74,6 +74,12 @@ class BotEngine {
   /// ここに入っている銘柄へは新規注文を出さない (利確・決済だけ行う)。
   Set<String> _heldSymbols = {};
 
+  /// 通ったかどうか分からない新規注文を出した銘柄と、分からなくなった時刻。
+  ///
+  /// 通っていれば取引所の一覧に載るので、載るまでの猶予
+  /// ([exchangeSyncGrace]) の間は保有中とみなし、重ねて出さない。
+  final Map<String, DateTime> _unsureOrders = {};
+
   /// 管理外の建玉について、すでに知らせた銘柄。同じ警告を毎分出さないため。
   final Set<String> _warnedForeignSymbols = {};
 
@@ -403,6 +409,17 @@ class BotEngine {
       unawaited(_attachExchangePosition(position));
       // 残った資金で、逆行した所に買い足し / 売り足しの指値を置く。
       if (side.addOnEnabled) unawaited(_placeAddOnOrder(position.id));
+    } on MexcOrderUnknownException catch (e) {
+      // 送り直すと二重に建つおそれがあるので、取引所の建玉で確かめられる
+      // までこの銘柄には新規を出さない。通っていれば、同じ注文で預けた
+      // 利確で決済される。
+      _unsureOrders[evaluation.symbol] = DateTime.now();
+      _heldSymbols = {..._heldSymbols, evaluation.symbol};
+      _log(BotEvent.error(
+        '${evaluation.symbol} の発注が通ったかどうか分かりません (${e.message})。'
+        '二重に建てないよう、取引所の建玉を確かめるまでこの銘柄には新規を出しません。',
+        symbol: evaluation.symbol,
+      ));
     } on MexcApiException catch (e) {
       _log(BotEvent.error(
         '${evaluation.symbol} の発注に失敗: ${e.description}',
@@ -461,6 +478,12 @@ class BotEngine {
         addOnFilled: false,
       );
       _emitSnapshot();
+    } on MexcOrderUnknownException catch (e) {
+      // 送り直すと指値が 2 本になるので、送り直さずに知らせる。
+      _log(BotEvent.warning(
+        '買い足しの指値が通ったかどうか分かりません (${e.message})。'
+        'MEXC の未約定注文を確かめてください。',
+      ));
     } on MexcApiException catch (e) {
       _log(BotEvent.warning('買い足しの指値を置けませんでした: ${e.description}'));
     } catch (e) {
@@ -551,7 +574,11 @@ class BotEngine {
           .where((p) =>
               DateTime.now().difference(p.openedAt) < exchangeSyncGrace)
           .map((p) => p.symbol);
-      _heldSymbols = {...openSymbols, ...pending};
+      // 通ったかどうか分からない注文も、同じだけ猶予を置く。
+      _unsureOrders.removeWhere(
+        (_, at) => DateTime.now().difference(at) >= exchangeSyncGrace,
+      );
+      _heldSymbols = {...openSymbols, ...pending, ..._unsureOrders.keys};
 
       for (final position in _positions.values.toList()) {
         // 発注直後は反映が遅れることがあるので少し猶予を置く。
