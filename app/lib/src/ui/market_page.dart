@@ -5,6 +5,7 @@ import 'package:mexc_core/mexc_core.dart';
 
 import '../app.dart';
 import '../data/chart_data.dart';
+import 'chart_overlays.dart';
 import 'format.dart';
 import 'price_chart.dart';
 
@@ -585,6 +586,7 @@ class _InlineChart extends StatelessWidget {
                   ],
                 ),
               ),
+              const ChartOverlayButton(),
               IconButton(
                 tooltip: '更新',
                 visualDensity: VisualDensity.compact,
@@ -627,6 +629,8 @@ class _InlineChart extends StatelessWidget {
               bbPeriod: side.bbPeriod,
               bbSigma: side.bbSigma,
               emaPeriod: side.emaPeriod,
+              extraSigmas: AppScope.of(context).settings.chartSigmas,
+              extraEmas: AppScope.of(context).settings.chartEmas,
               height: 220,
               lines: [
                 if (p != null) ...[

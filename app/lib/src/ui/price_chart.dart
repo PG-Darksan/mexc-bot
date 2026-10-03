@@ -24,10 +24,33 @@ class PriceLine {
   final bool emphasized;
 }
 
+/// 足して描くバンド / EMA の色。σ や期間ごとに決めておき、どのチャートでも同じ色にする。
+Color _extraColor(num key) => switch (key) {
+  1 => const Color(0xFF90A4AE),
+  2 => const Color(0xFF64B5F6),
+  3 => const Color(0xFFBA68C8),
+  4 => const Color(0xFFFF8A65),
+  5 => const Color(0xFFA1887F),
+  20 => const Color(0xFF4DD0E1),
+  50 => const Color(0xFFFFB74D),
+  100 => const Color(0xFFF06292),
+  150 => const Color(0xFF4FC3F7),
+  200 => const Color(0xFFFFF176),
+  _ => const Color(0xFF9E9E9E),
+};
+
+String _trimNumber(double v) {
+  final text = v.toString();
+  return text.endsWith('.0') ? text.substring(0, text.length - 2) : text;
+}
+
 /// ローソク足に、ボリンジャーバンド・EMA・横線を重ねて描く。
 ///
 /// fl_chart のローソク足には線を重ねにくいので、自前で描いている。
 /// 自分で座標を持つぶん、なぞった位置を値段へ正確に戻せる。
+///
+/// 指標は渡されたローソク全部で計算し、描くのは直近 [visibleBars] 本だけ。
+/// EMA150 のような長い期間は、描く範囲より前の足が無いと正しく出ないため。
 class PriceChart extends StatelessWidget {
   const PriceChart({
     super.key,
@@ -35,15 +58,29 @@ class PriceChart extends StatelessWidget {
     required this.bbPeriod,
     required this.bbSigma,
     required this.emaPeriod,
+    this.extraSigmas = const [],
+    this.extraEmas = const [],
+    this.visibleBars = defaultVisibleBars,
     this.lines = const [],
     this.onDragPrice,
     this.height = 280,
   });
 
+  /// 描く本数の既定。取るのはこれより多め (長い EMA の助走ぶん)。
+  static const int defaultVisibleBars = 200;
+
   final List<Candle> candles;
+
+  /// 判定に使うバンドと EMA。いつも描く。
   final int bbPeriod;
   final double bbSigma;
   final int emaPeriod;
+
+  /// 足して描くバンドの σ と EMA の期間 (チャートの「線の表示」で選ぶ)。
+  final List<double> extraSigmas;
+  final List<int> extraEmas;
+
+  final int visibleBars;
   final List<PriceLine> lines;
 
   /// 上下になぞったときに、その位置の値段を返す。null なら動かせない。
@@ -70,13 +107,44 @@ class PriceChart extends StatelessWidget {
 
     final theme = Theme.of(context);
     final closes = [for (final c in candles) c.close];
-    final bands = _bollingerSeries(closes, bbPeriod, bbSigma);
-    final emas = Indicators.emaSeries(closes, emaPeriod);
+    final start = math.max(0, candles.length - visibleBars);
+    List<T> tail<T>(List<T> values) => values.sublist(start);
+
+    final shown = tail(candles);
+    final bands = tail(_bollingerSeries(closes, bbPeriod, bbSigma));
+    final emas = tail(Indicators.emaSeries(closes, emaPeriod));
+    // σ を変えても平均と標準偏差は同じなので、判定のバンドから引き直す。
+    final sigmas = {
+      for (final s in extraSigmas)
+        if (s > 0 && s != bbSigma) s,
+    }.toList()..sort();
+    final extraBands = [
+      for (final s in sigmas)
+        (
+          upper: [
+            for (final b in bands)
+              b == null ? null : b.middle + b.deviation * s,
+          ],
+          lower: [
+            for (final b in bands)
+              b == null ? null : b.middle - b.deviation * s,
+          ],
+          color: _extraColor(s),
+        ),
+    ];
+    final periods = {
+      for (final p in extraEmas)
+        if (p > 1 && p != emaPeriod) p,
+    }.toList()..sort();
+    final extraEmaLines = [
+      for (final p in periods)
+        (values: tail(Indicators.emaSeries(closes, p)), color: _extraColor(p)),
+    ];
 
     // 値幅は、ローソク・バンド・横線がすべて入るように取る。
     var minPrice = double.infinity;
     var maxPrice = double.negativeInfinity;
-    for (final c in candles) {
+    for (final c in shown) {
       minPrice = math.min(minPrice, c.low);
       maxPrice = math.max(maxPrice, c.high);
     }
@@ -84,6 +152,13 @@ class PriceChart extends StatelessWidget {
       if (b == null) continue;
       minPrice = math.min(minPrice, b.lower);
       maxPrice = math.max(maxPrice, b.upper);
+    }
+    for (final band in extraBands) {
+      for (final v in [...band.upper, ...band.lower]) {
+        if (v == null) continue;
+        minPrice = math.min(minPrice, v);
+        maxPrice = math.max(maxPrice, v);
+      }
     }
     for (final line in lines) {
       minPrice = math.min(minPrice, line.price);
@@ -109,9 +184,11 @@ class PriceChart extends StatelessWidget {
     final painter = CustomPaint(
       size: Size.infinite,
       painter: _PriceChartPainter(
-        candles: candles,
+        candles: shown,
         bands: bands,
         emas: emas,
+        extraBands: extraBands,
+        extraEmas: extraEmaLines,
         lines: lines,
         minPrice: minPrice,
         maxPrice: maxPrice,
@@ -127,18 +204,58 @@ class PriceChart extends StatelessWidget {
       ),
     );
 
-    if (onDragPrice == null) {
-      return SizedBox(height: height, child: painter);
-    }
-    return SizedBox(
-      height: height,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onVerticalDragUpdate: (details) =>
-            onDragPrice!(priceAt(details.localPosition.dy)),
-        onTapDown: (details) => onDragPrice!(priceAt(details.localPosition.dy)),
-        child: painter,
+    final chart = onDragPrice == null
+        ? SizedBox(height: height, child: painter)
+        : SizedBox(
+            height: height,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onVerticalDragUpdate: (details) =>
+                  onDragPrice!(priceAt(details.localPosition.dy)),
+              onTapDown: (details) =>
+                  onDragPrice!(priceAt(details.localPosition.dy)),
+              child: painter,
+            ),
+          );
+
+    // どの線が何かを、チャートのすぐ下に小さく出す。
+    final legend = <(String, Color)>[
+      (
+        'BB($bbPeriod) ${_trimNumber(bbSigma)}σ (判定)',
+        theme.colorScheme.tertiary,
       ),
+      for (final s in sigmas) ('${_trimNumber(s)}σ', _extraColor(s)),
+      ('EMA$emaPeriod (利確)', theme.colorScheme.primary),
+      for (final p in periods) ('EMA$p', _extraColor(p)),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        chart,
+        const SizedBox(height: 4),
+        Wrap(
+          spacing: 10,
+          runSpacing: 2,
+          children: [
+            for (final (label, color) in legend)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(width: 12, height: 2, color: color),
+                  const SizedBox(width: 4),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -179,6 +296,8 @@ class _PriceChartPainter extends CustomPainter {
     required this.candles,
     required this.bands,
     required this.emas,
+    required this.extraBands,
+    required this.extraEmas,
     required this.lines,
     required this.minPrice,
     required this.maxPrice,
@@ -196,6 +315,9 @@ class _PriceChartPainter extends CustomPainter {
   final List<Candle> candles;
   final List<BollingerPoint?> bands;
   final List<double?> emas;
+  final List<({List<double?> upper, List<double?> lower, Color color})>
+  extraBands;
+  final List<({List<double?> values, Color color})> extraEmas;
   final List<PriceLine> lines;
   final double minPrice;
   final double maxPrice;
@@ -306,6 +428,11 @@ class _PriceChartPainter extends CustomPainter {
       );
     }
 
+    // 足したバンドを先に描き、判定のバンドを上に重ねる。
+    for (final band in extraBands) {
+      stroke(band.upper, band.color.withValues(alpha: 0.85), 0.9);
+      stroke(band.lower, band.color.withValues(alpha: 0.85), 0.9);
+    }
     stroke([for (final b in bands) b?.upper], bandColor, 1.2);
     stroke([for (final b in bands) b?.lower], bandColor, 1.2);
     stroke(
@@ -313,6 +440,9 @@ class _PriceChartPainter extends CustomPainter {
       bandColor.withValues(alpha: 0.45),
       1,
     );
+    for (final ema in extraEmas) {
+      stroke(ema.values, ema.color, 1.1);
+    }
     stroke(emas, emaColor, 1.4);
   }
 
@@ -408,6 +538,8 @@ class _PriceChartPainter extends CustomPainter {
   bool shouldRepaint(_PriceChartPainter old) =>
       old.candles != candles ||
       old.lines != lines ||
+      old.extraBands != extraBands ||
+      old.extraEmas != extraEmas ||
       old.minPrice != minPrice ||
       old.maxPrice != maxPrice;
 }

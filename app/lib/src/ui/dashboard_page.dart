@@ -37,7 +37,9 @@ class AccountSection extends StatelessWidget {
         ),
         if (!hasKey)
           const _Note('APIキーを設定すると残高が表示されます (設定タブ)。')
-        else if (state.assetError != null)
+        // 端末から直接取れなくても、サーバー (やローカルのエンジン) から
+        // 残高が届いていれば困らないので、知らせない。
+        else if (asset == null && state.assetError != null)
           _Note('取得できませんでした: ${state.assetError}')
         else if (asset == null)
           const _Note('「更新」を押すと残高を取得します。'),
@@ -65,7 +67,7 @@ class AccountSection extends StatelessWidget {
   }
 }
 
-/// 成績・稼働状況・売買の条件・最近の検知。ホームのチャートの下に置く。
+/// 成績・稼働状況・売買の条件。ホームに置く (検知の記録は履歴タブで見る)。
 class StatusSections extends StatelessWidget {
   const StatusSections({super.key});
 
@@ -152,8 +154,11 @@ class StatusSections extends StatelessWidget {
           ],
         ),
         _Note(
-          '判定は ${config.evaluationIntervalSeconds} 秒ごとです。'
-          'かかった時間がこれより短ければ追いついています。',
+          snapshot.running
+              ? '判定は ${config.evaluationIntervalSeconds} 秒ごとです。'
+                    'かかった時間がこれより短ければ追いついています。'
+              : '止まっています。監視する銘柄は動いているときに決め直すので、'
+                    '出来高の下限などを変えたときは「開始」すると反映されます。',
         ),
         const SizedBox(height: 24),
         _SectionTitle('売買の条件'),
@@ -212,49 +217,8 @@ class StatusSections extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(height: 24),
-        _SectionTitle('最近の検知'),
-        _RecentSignals(events: state.events),
         const SizedBox(height: 16),
       ],
-    );
-  }
-}
-
-class _RecentSignals extends StatelessWidget {
-  const _RecentSignals({required this.events});
-
-  final List<BotEvent> events;
-
-  @override
-  Widget build(BuildContext context) {
-    final trades = events
-        .where((e) => e.level == BotLogLevel.trade)
-        .take(10)
-        .toList();
-    if (trades.isEmpty) {
-      return const Card(
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Center(child: Text('まだ検知はありません')),
-        ),
-      );
-    }
-    return Card(
-      child: Column(
-        children: [
-          for (final e in trades)
-            ListTile(
-              dense: true,
-              leading: const Icon(Icons.bolt, size: 18),
-              title: Text(e.message, style: const TextStyle(fontSize: 13)),
-              trailing: Text(
-                formatTimeShort(e.time),
-                style: const TextStyle(fontSize: 12),
-              ),
-            ),
-        ],
-      ),
     );
   }
 }

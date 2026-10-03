@@ -4,8 +4,10 @@ import 'package:mexc_core/mexc_core.dart';
 import '../app.dart';
 import '../data/chart_data.dart';
 import '../state/app_state.dart';
+import 'chart_overlays.dart';
 import 'dashboard_page.dart';
 import 'format.dart';
+import 'held_chart.dart';
 import 'price_chart.dart';
 
 /// 動かすラインの種類。
@@ -52,6 +54,9 @@ class _ChartPageState extends State<ChartPage> {
 
   AppState? _state;
   int _seenRequest = 0;
+
+  /// 下のチャートの場所。保有中のチャートの「利確を動かす」で、ここまで送る。
+  final GlobalKey _mainChartKey = GlobalKey();
 
   @override
   void initState() {
@@ -140,6 +145,22 @@ class _ChartPageState extends State<ChartPage> {
     }
   }
 
+  /// 下のチャートを [symbol] に切り替えて、そこまで送る。
+  void _focusMainChart(String symbol) {
+    if (symbol != _symbol) {
+      setState(() => _symbol = symbol);
+      _loadChart();
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final target = _mainChartKey.currentContext;
+      if (target == null || !target.mounted) return;
+      Scrollable.ensureVisible(
+        target,
+        duration: const Duration(milliseconds: 300),
+      );
+    });
+  }
+
   ManagedPosition? _positionOf(BotSnapshot snapshot) {
     for (final p in snapshot.positions) {
       if (p.symbol == _symbol) return p;
@@ -191,82 +212,108 @@ class _ChartPageState extends State<ChartPage> {
       _symbol,
     }.toList();
 
-    return ListView(
+    // 全部を一度に組み立てる (ListView だと、画面外の下のチャートが
+    // 作られておらず「利確を動かす」で送れないため)。
+    return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-      children: [
-        const AccountSection(),
-        const SizedBox(height: 20),
-        _SymbolSearch(
-          symbols: _allSymbols,
-          onSelected: (s) {
-            setState(() => _symbol = s);
-            _loadChart();
-          },
-        ),
-        const SizedBox(height: 12),
-        _ChartCard(
-          symbol: _symbol,
-          symbols: symbols,
-          heldSymbols: {for (final p in snapshot.positions) p.symbol},
-          timeframe: _timeframe,
-          timeframes: _timeframes,
-          candles: _candles,
-          loading: _loadingChart,
-          error: _chartError,
-          config: config,
-          lines: _buildLines(position),
-          onSymbolChanged: (s) {
-            setState(() => _symbol = s);
-            _loadChart();
-          },
-          onTimeframeChanged: (tf) {
-            setState(() => _timeframe = tf);
-            _loadChart();
-          },
-          onRefresh: _loadChart,
-          onDragPrice: position == null
-              ? null
-              : (price) => setState(() {
-                  if (_editing == _ExitLine.takeProfit) {
-                    _takeProfitDraft = price;
-                  } else {
-                    _stopLossDraft = price;
-                  }
-                }),
-        ),
-        if (position != null) ...[
-          const SizedBox(height: 16),
-          _ExitLineEditor(
-            position: position,
-            lastPrice:
-                snapshot.markPrices[position.symbol] ??
-                (_candles.isEmpty ? position.entryPrice : _candles.last.close),
-            takeProfit: _takeProfitDraft ?? position.takeProfitPrice,
-            stopLoss: _stopLossDraft,
-            editing: _editing,
-            sending: _sending,
-            onEditingChanged: (line) => setState(() => _editing = line),
-            onTakeProfitChanged: (v) => setState(() => _takeProfitDraft = v),
-            onStopLossChanged: (v) => setState(() => _stopLossDraft = v),
-            onReset: () => setState(() {
-              _takeProfitDraft = position.takeProfitPrice;
-              _stopLossDraft = position.stopLossPrice;
-            }),
-            onApply: () => _applyExitLines(position),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const AccountSection(),
+          if (snapshot.positions.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            _Heading('保有中の建玉'),
+            const SizedBox(height: 8),
+            for (final p in snapshot.positions) ...[
+              HeldPositionChart(
+                key: ValueKey(p.id),
+                position: p,
+                source: _source,
+                config: config,
+                markPrice: snapshot.markPrices[p.symbol],
+                onEditExit: () => _focusMainChart(p.symbol),
+              ),
+              const SizedBox(height: 12),
+            ],
+          ],
+          const SizedBox(height: 20),
+          _Heading('相場のムード'),
+          const SizedBox(height: 8),
+          _FearGreedCard(
+            points: _fearGreed,
+            loading: _loadingIndex,
+            error: _indexError,
+            onRefresh: _loadIndex,
           ),
+          const SizedBox(height: 24),
+          const StatusSections(),
+          // 銘柄を選んで見るチャートは、いちばん下に置く。
+          const SizedBox(height: 8),
+          _Heading('チャート', key: _mainChartKey),
+          const SizedBox(height: 8),
+          _SymbolSearch(
+            symbols: _allSymbols,
+            onSelected: (s) {
+              setState(() => _symbol = s);
+              _loadChart();
+            },
+          ),
+          const SizedBox(height: 12),
+          _ChartCard(
+            symbol: _symbol,
+            symbols: symbols,
+            heldSymbols: {for (final p in snapshot.positions) p.symbol},
+            timeframe: _timeframe,
+            timeframes: _timeframes,
+            candles: _candles,
+            loading: _loadingChart,
+            error: _chartError,
+            config: config,
+            lines: _buildLines(position),
+            onSymbolChanged: (s) {
+              setState(() => _symbol = s);
+              _loadChart();
+            },
+            onTimeframeChanged: (tf) {
+              setState(() => _timeframe = tf);
+              _loadChart();
+            },
+            onRefresh: _loadChart,
+            onDragPrice: position == null
+                ? null
+                : (price) => setState(() {
+                    if (_editing == _ExitLine.takeProfit) {
+                      _takeProfitDraft = price;
+                    } else {
+                      _stopLossDraft = price;
+                    }
+                  }),
+          ),
+          if (position != null) ...[
+            const SizedBox(height: 16),
+            _ExitLineEditor(
+              position: position,
+              lastPrice:
+                  snapshot.markPrices[position.symbol] ??
+                  (_candles.isEmpty
+                      ? position.entryPrice
+                      : _candles.last.close),
+              takeProfit: _takeProfitDraft ?? position.takeProfitPrice,
+              stopLoss: _stopLossDraft,
+              editing: _editing,
+              sending: _sending,
+              onEditingChanged: (line) => setState(() => _editing = line),
+              onTakeProfitChanged: (v) => setState(() => _takeProfitDraft = v),
+              onStopLossChanged: (v) => setState(() => _stopLossDraft = v),
+              onReset: () => setState(() {
+                _takeProfitDraft = position.takeProfitPrice;
+                _stopLossDraft = position.stopLossPrice;
+              }),
+              onApply: () => _applyExitLines(position),
+            ),
+          ],
         ],
-        const SizedBox(height: 20),
-        _Heading('相場のムード'),
-        const SizedBox(height: 8),
-        _FearGreedCard(
-          points: _fearGreed,
-          loading: _loadingIndex,
-          error: _indexError,
-          onRefresh: _loadIndex,
-        ),
-        const SizedBox(height: 24),
-        const StatusSections(),
-      ],
+      ),
     );
   }
 
@@ -375,7 +422,7 @@ class _SymbolSearch extends StatelessWidget {
 }
 
 class _Heading extends StatelessWidget {
-  const _Heading(this.text);
+  const _Heading(this.text, {super.key});
 
   final String text;
 
@@ -565,7 +612,13 @@ class _ChartCard extends StatelessWidget {
         ? Indicators.rsi(closes, side.rsiPeriod)
         : null;
     final last = closes.isEmpty ? null : closes.last;
-    final first = closes.isEmpty ? null : closes.first;
+    // 「この期間」は描いている範囲 (直近の本数) で出す。取る本数はもっと多い。
+    final first = closes.isEmpty
+        ? null
+        : closes[(closes.length - PriceChart.defaultVisibleBars).clamp(
+            0,
+            closes.length - 1,
+          )];
     final change = (last == null || first == null || first == 0)
         ? null
         : (last - first) / first * 100;
@@ -590,7 +643,7 @@ class _ChartCard extends StatelessWidget {
                   _shortLabels[timeframe] ?? timeframe.label,
                   style: theme.textTheme.bodySmall,
                 ),
-                const SizedBox(width: 8),
+                const ChartOverlayButton(),
                 FilledButton.tonalIcon(
                   onPressed: loading ? null : onRefresh,
                   icon: loading
@@ -675,6 +728,8 @@ class _ChartCard extends StatelessWidget {
                 bbPeriod: side.bbPeriod,
                 bbSigma: side.bbSigma,
                 emaPeriod: side.emaPeriod,
+                extraSigmas: AppScope.of(context).settings.chartSigmas,
+                extraEmas: AppScope.of(context).settings.chartEmas,
                 lines: lines,
                 onDragPrice: onDragPrice,
               ),

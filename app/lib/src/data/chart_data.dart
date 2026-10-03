@@ -47,7 +47,7 @@ class ChartDataSource {
   Future<List<Candle>> klines(
     String symbol,
     Timeframe timeframe, {
-    int bars = 200,
+    int bars = 800,
   }) => _rest.fetchKlines(symbol, timeframe, bars: bars);
 
   /// 取引できる USDT 無期限の全銘柄の、いまの値段と 24 時間の動き。
