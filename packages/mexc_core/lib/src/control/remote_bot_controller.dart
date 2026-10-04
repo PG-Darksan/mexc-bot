@@ -135,7 +135,7 @@ class RemoteBotController implements BotController {
         onDone: () => _scheduleReconnect(
           _authenticated
               ? 'サーバーとの接続が切れました'
-              : 'つないだ直後に切られました。接続トークンを確かめてください。',
+              : '繋いだ直後に切られました。接続トークンを確かめてください。',
         ),
         cancelOnError: true,
       );

@@ -395,7 +395,6 @@ class StrategyConfig {
     this.long = const SideConfig.long(),
     this.evaluationIntervalSeconds = 60,
     this.reentryCooldownMinutes = 60,
-    this.oneSignalPerBar = true,
   });
 
   // ── 方向ごとの条件 ──────────────────────────────────────────
@@ -408,9 +407,6 @@ class StrategyConfig {
 
   /// 決済後、同じ銘柄に再エントリーするまでの待ち時間 (分)。
   final int reentryCooldownMinutes;
-
-  /// 同じ足で 2 回以上発火させないか。
-  final bool oneSignalPerBar;
 
   /// 発注と同時に利確 (takeProfitPrice) を取引所へ預ける。常に行う。
   ///
@@ -462,11 +458,12 @@ class StrategyConfig {
       ..sort((a, b) => a.seconds.compareTo(b.seconds));
   }
 
-  /// 監視銘柄を選ぶときの出来高の下限。方向ごとの指定のうち低いほう。
+  /// 監視銘柄を選ぶときの出来高の下限。両方の向きの下限のうち低いほう。
   ///
-  /// ここで広く集めてから、方向ごとの下限で判定時に落とす。
+  /// 切っている向きの下限も含める (ショート 1M・ロング 10M なら 1M 以上を
+  /// 全部見る)。ここで広く集めてから、方向ごとの下限で判定時に落とす。
   double get minAmount24Usdt =>
-      watchedSides.map((s) => s.minAmount24Usdt).reduce(math.min);
+      math.min(short.minAmount24Usdt, long.minAmount24Usdt);
 
   /// 保持する足の本数。方向ごとの指定のうち多いほう。
   int get historyBars =>
@@ -503,7 +500,6 @@ class StrategyConfig {
     SideConfig? long,
     int? evaluationIntervalSeconds,
     int? reentryCooldownMinutes,
-    bool? oneSignalPerBar,
   }) => StrategyConfig(
     short: short ?? this.short,
     long: long ?? this.long,
@@ -511,7 +507,6 @@ class StrategyConfig {
         evaluationIntervalSeconds ?? this.evaluationIntervalSeconds,
     reentryCooldownMinutes:
         reentryCooldownMinutes ?? this.reentryCooldownMinutes,
-    oneSignalPerBar: oneSignalPerBar ?? this.oneSignalPerBar,
   );
 
   /// 片方向ぶんだけ差し替える。
@@ -524,13 +519,11 @@ class StrategyConfig {
     'long': long.toJson(),
     'evaluationIntervalSeconds': evaluationIntervalSeconds,
     'reentryCooldownMinutes': reentryCooldownMinutes,
-    'oneSignalPerBar': oneSignalPerBar,
   };
 
   factory StrategyConfig.fromJson(Map<String, dynamic> json) {
     const fallback = StrategyConfig();
     int i(String k, int f) => (json[k] as num?)?.toInt() ?? f;
-    bool b(String k, bool f) => json[k] as bool? ?? f;
     Map<String, dynamic>? m(String k) =>
         (json[k] as Map?)?.cast<String, dynamic>();
 
@@ -568,7 +561,6 @@ class StrategyConfig {
           i('evaluationIntervalSeconds', fallback.evaluationIntervalSeconds),
       reentryCooldownMinutes:
           i('reentryCooldownMinutes', fallback.reentryCooldownMinutes),
-      oneSignalPerBar: b('oneSignalPerBar', fallback.oneSignalPerBar),
     );
   }
 }

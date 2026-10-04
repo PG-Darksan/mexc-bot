@@ -799,4 +799,16 @@ void main() {
       expect(config.validate().length, greaterThanOrEqualTo(4));
     });
   });
+
+  // ショート 1M・ロング 10M なら、ショートを切っていても 1M 以上を全部見る。
+  test('監視銘柄の出来高の下限は、両方の向きの低いほう', () {
+    final config = StrategyConfig(
+      short: const SideConfig.short().copyWith(
+        enabled: false,
+        minAmount24Usdt: 1000000,
+      ),
+      long: const SideConfig.long().copyWith(minAmount24Usdt: 10000000),
+    );
+    expect(config.minAmount24Usdt, 1000000);
+  });
 }

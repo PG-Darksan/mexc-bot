@@ -66,8 +66,6 @@ class BotEngine {
   final List<ManagedPosition> _closedPositions = [];
   final Map<String, DateTime> _cooldownUntil = {};
 
-  /// 「銘柄|時間軸|方向」ごとに、最後に発火した足の開始時刻。同じ足での連発を防ぐ。
-  final Map<String, int> _firedBars = {};
 
   /// 取引所側に建玉がある銘柄。ボットが建てたものも、手で建てたものも入る。
   ///
@@ -222,7 +220,11 @@ class BotEngine {
     _config = config;
     _log(BotEvent.info('設定を更新しました'));
 
-    if (_running) {
+    if (!_running) {
+      // 止まっている間は購読はせず、選び直した数だけ見せる (下限を変えたら
+      // すぐ数に表れるように)。開始したときに改めて選んで購読する。
+      if (_feed.tickers.isNotEmpty) _watchlist = _selectSymbols();
+    } else {
       if (intervalChanged) {
         _timer?.cancel();
         _timer = Timer.periodic(
@@ -344,13 +346,13 @@ class BotEngine {
     return out;
   }
 
-  /// 指標以外 (保有状況・クールダウン・同じ足での連発) の条件を重ねる。
+  /// 指標以外 (保有状況・再エントリー待ち) の条件を重ねる。
+  ///
+  /// 建玉のある銘柄は、持っている間は 1 回しか発火しない (重ねて建てない)。
   SignalEvaluation _applyPortfolioFilters(SignalEvaluation evaluation) {
     if (!evaluation.isTriggered) return evaluation;
 
     RejectReason? reason;
-    final key = _firedBarKey(evaluation);
-
     if (isHolding(evaluation.symbol)) {
       // すでに建玉がある銘柄には、向きが同じでも違っても新規は出さない。
       // 出すのは利確 (決済) だけ。
@@ -359,9 +361,6 @@ class BotEngine {
       final until = _cooldownUntil[evaluation.symbol];
       if (until != null && DateTime.now().isBefore(until)) {
         reason = RejectReason.cooldown;
-      } else if (_config.oneSignalPerBar &&
-          _firedBars[key] == evaluation.barOpenTime) {
-        reason = RejectReason.cooldown;
       }
     }
 
@@ -369,8 +368,6 @@ class BotEngine {
     return evaluation.rejected(reason);
   }
 
-  String _firedBarKey(SignalEvaluation e) =>
-      '${e.symbol}|${e.timeframe.interval}|${e.direction.name}';
 
   /// その銘柄の建玉をすでに持っているか。
   ///
@@ -387,8 +384,6 @@ class BotEngine {
     // 同じサイクルで別の時間軸や反対方向が先に建てている場合があるので、
     // 発注の直前にもう一度見る。
     if (isHolding(evaluation.symbol)) return;
-
-    _firedBars[_firedBarKey(evaluation)] = evaluation.barOpenTime;
 
     final side = _config.sideOf(evaluation.direction);
     final isShort = evaluation.direction.isShort;
@@ -768,6 +763,7 @@ class BotEngine {
       try {
         if (_feed.contracts.isEmpty) await _feed.refreshContracts();
         await _feed.refreshTickers();
+        _watchlist = _selectSymbols();
       } catch (e) {
         _log(BotEvent.warning('現在値を取り直せませんでした: $e'));
       }

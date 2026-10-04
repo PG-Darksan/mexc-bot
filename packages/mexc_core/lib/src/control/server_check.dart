@@ -122,7 +122,7 @@ Future<ServerCheckResult> checkBotServer({
   } catch (e) {
     return ServerCheckResult(
       ServerCheckStatus.unreachable,
-      '$uri につなげません: ${_reason(e)}',
+      '$uri に繋げません: ${_reason(e)}',
       url: uri,
     );
   }
@@ -147,7 +147,7 @@ Future<ServerCheckResult> checkBotServer({
         case ServerMessageType.hello:
           finish(ServerCheckResult(
             ServerCheckStatus.ok,
-            '$uri につながりました。トークンも通っています。',
+            '$uri に繋がりました。トークンも通っています。',
             url: uri,
           ));
         case ServerMessageType.error:
@@ -168,7 +168,7 @@ Future<ServerCheckResult> checkBotServer({
     )),
     onDone: () => finish(ServerCheckResult(
       ServerCheckStatus.badToken,
-      'つないだ直後に切られました。トークンが違う可能性が高いです。',
+      '繋いだ直後に切られました。トークンが違う可能性が高いです。',
       url: uri,
     )),
     cancelOnError: true,
@@ -193,7 +193,7 @@ Future<ServerCheckResult> checkBotServer({
     timeout,
     onTimeout: () => ServerCheckResult(
       ServerCheckStatus.noReply,
-      'つながりましたが返事がありません。'
+      '繋がりましたが返事がありません。'
       '$uri が本当にこのボットのサーバーかを確かめてください '
       '(別のサービスが同じポートで動いていることがあります)。',
       url: uri,
