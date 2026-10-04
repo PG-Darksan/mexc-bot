@@ -22,7 +22,7 @@ class AppSettings {
     this.chartEmas = defaultChartEmas,
   });
 
-  static const List<double> defaultChartSigmas = [2, 3];
+  static const List<double> defaultChartSigmas = [2, 3, 4];
   static const List<int> defaultChartEmas = [50, 100, 150];
 
   final RunMode mode;
@@ -37,7 +37,7 @@ class AppSettings {
   /// 画面の明るさ。端末に合わせるか、明るい / 暗いを選ぶ。
   final AppThemeMode themeMode;
 
-  /// チャートに足して描くボリンジャーバンドの σ。判定に使う σ は別に必ず描く。
+  /// チャートに描くボリンジャーバンドの σ。判定に使う σ も、選ばなければ描かない。
   final List<double> chartSigmas;
 
   /// チャートに足して描く EMA の期間。利確に使う EMA は別に必ず描く。
@@ -67,7 +67,7 @@ class AppSettings {
     'serverToken': serverToken,
     'wasRunning': wasRunning,
     'themeMode': themeMode.name,
-    'chartSigmas': chartSigmas,
+    'chartBands': chartSigmas,
     'chartEmas': chartEmas,
   };
 
@@ -85,12 +85,7 @@ class AppSettings {
       (e) => e.name == json['themeMode'],
       orElse: () => AppThemeMode.system,
     ),
-    chartSigmas:
-        (json['chartSigmas'] as List?)
-            ?.whereType<num>()
-            .map((v) => v.toDouble())
-            .toList() ??
-        defaultChartSigmas,
+    chartSigmas: _bandsFromJson(json),
     chartEmas:
         (json['chartEmas'] as List?)
             ?.whereType<num>()
@@ -98,4 +93,18 @@ class AppSettings {
             .toList() ??
         defaultChartEmas,
   );
+}
+
+/// 描くバンドの σ を読む。
+///
+/// 以前の版 (chartSigmas) は「判定の σ (既定 4) に足して描く σ」だったので、
+/// 4σ を足して引き継ぐ。
+List<double> _bandsFromJson(Map<String, dynamic> json) {
+  List<double>? read(String key) =>
+      (json[key] as List?)?.whereType<num>().map((v) => v.toDouble()).toList();
+  final bands = read('chartBands');
+  if (bands != null) return bands;
+  final old = read('chartSigmas');
+  if (old != null) return {...old, 4.0}.toList()..sort();
+  return AppSettings.defaultChartSigmas;
 }

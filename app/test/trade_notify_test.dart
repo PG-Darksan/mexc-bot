@@ -117,4 +117,26 @@ void main() {
     await state.stop();
     expect((await store.loadAppSettings()).wasRunning, isFalse);
   });
+
+  test('取引所の建玉のうち、ボットが管理していないものだけを拾う', () {
+    PositionInfo exchange(String symbol, int type) => PositionInfo.fromJson({
+      'positionId': symbol.hashCode,
+      'symbol': symbol,
+      'positionType': type,
+      'state': 1,
+      'holdVol': 1,
+    });
+    final foreign = exchangeOnlyPositions(
+      [_position('a')], // TAKE_USDT のショート
+      [
+        exchange('TAKE_USDT', 2), // ボットのもの
+        exchange('TAKE_USDT', 1), // 同じ銘柄でも向きが違えば別
+        exchange('BTC_USDT', 1), // 手で建てたもの
+      ],
+    );
+    expect(foreign.map((p) => '${p.symbol}/${p.positionType}'), [
+      'TAKE_USDT/1',
+      'BTC_USDT/1',
+    ]);
+  });
 }

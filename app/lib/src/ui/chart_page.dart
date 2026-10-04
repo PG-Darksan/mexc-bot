@@ -206,6 +206,12 @@ class _ChartPageState extends State<ChartPage> {
     final position = _positionOf(snapshot);
     _syncDraft(position);
 
+    final held = [
+      for (final p in snapshot.positions) HeldView.managed(p),
+      for (final p in state.foreignPositions)
+        HeldView.exchange(p, state.contractSizeOf(p.symbol)),
+    ];
+
     final symbols = <String>{
       _defaultSymbol,
       for (final p in snapshot.positions) p.symbol,
@@ -220,23 +226,32 @@ class _ChartPageState extends State<ChartPage> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const AccountSection(),
-          if (snapshot.positions.isNotEmpty) ...[
+          // 自分の建玉をいちばん上に出す。ボットが管理していない建玉も
+          // (端末から取引所へ聞けていれば) 並べる。
+          if (held.isNotEmpty) ...[
             const SizedBox(height: 20),
             _Heading('保有中の建玉'),
             const SizedBox(height: 8),
-            for (final p in snapshot.positions) ...[
+            for (final view in held) ...[
               HeldPositionChart(
-                key: ValueKey(p.id),
-                position: p,
+                key: ValueKey(view.id),
+                position: view,
                 source: _source,
                 config: config,
-                markPrice: snapshot.markPrices[p.symbol],
-                onEditExit: () => _focusMainChart(p.symbol),
+                markPrice: state.lastPriceOf(view.symbol),
+                onEditExit: view.managed
+                    ? () => _focusMainChart(view.symbol)
+                    : null,
               ),
               const SizedBox(height: 12),
             ],
           ],
           const SizedBox(height: 20),
+          const RunningStatusSection(),
+          const SizedBox(height: 16),
+          const TradeConditionsSection(),
+          // 恐怖指数と成績は、見る頻度が低いので下のほうに置く。
+          const SizedBox(height: 24),
           _Heading('相場のムード'),
           const SizedBox(height: 8),
           _FearGreedCard(
@@ -246,7 +261,7 @@ class _ChartPageState extends State<ChartPage> {
             onRefresh: _loadIndex,
           ),
           const SizedBox(height: 24),
-          const StatusSections(),
+          const PerformanceSection(),
           // 銘柄を選んで見るチャートは、いちばん下に置く。
           const SizedBox(height: 8),
           _Heading('チャート', key: _mainChartKey),
@@ -728,7 +743,7 @@ class _ChartCard extends StatelessWidget {
                 bbPeriod: side.bbPeriod,
                 bbSigma: side.bbSigma,
                 emaPeriod: side.emaPeriod,
-                extraSigmas: AppScope.of(context).settings.chartSigmas,
+                sigmas: AppScope.of(context).settings.chartSigmas,
                 extraEmas: AppScope.of(context).settings.chartEmas,
                 lines: lines,
                 onDragPrice: onDragPrice,

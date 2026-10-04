@@ -35,7 +35,7 @@ void main() {
             bbPeriod: 20,
             bbSigma: 4,
             emaPeriod: 5,
-            extraSigmas: const [2, 3, 4],
+            sigmas: const [2, 3, 4],
             extraEmas: const [50, 100, 150],
           ),
         ),
@@ -76,9 +76,43 @@ void main() {
     await tester.pumpAndSettle();
     expect(state.settings.chartSigmas, containsAll([2.0, 3.0, 5.0]));
 
+    // 判定に使うバンドも外せる。
+    await tester.tap(find.text('±4σ (判定)'));
+    await tester.pumpAndSettle();
+    expect(state.settings.chartSigmas, isNot(contains(4.0)));
+    await tester.tap(find.text('±2σ'));
+    await tester.pumpAndSettle();
+    expect(state.settings.chartSigmas, isNot(contains(2.0)));
+
     // 閉じて開き直しても残る。
     final restored = AppSettings.fromJson(state.settings.toJson());
     expect(restored.chartSigmas, state.settings.chartSigmas);
     expect(restored.chartEmas, state.settings.chartEmas);
+  });
+
+  testWidgets('判定のバンドを選ばなければ描かない', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PriceChart(
+            candles: _candles(300),
+            bbPeriod: 20,
+            bbSigma: 4,
+            emaPeriod: 5,
+            sigmas: const [3],
+          ),
+        ),
+      ),
+    );
+    expect(tester.takeException(), isNull);
+    expect(find.text('BB(20) 4σ (判定)'), findsNothing);
+    expect(find.text('3σ'), findsOneWidget);
+  });
+
+  test('以前の版の線の選択は、判定の 4σ を足して引き継ぐ', () {
+    final restored = AppSettings.fromJson({
+      'chartSigmas': [2, 3],
+    });
+    expect(restored.chartSigmas, [2.0, 3.0, 4.0]);
   });
 }

@@ -629,7 +629,7 @@ class _InlineChart extends StatelessWidget {
               bbPeriod: side.bbPeriod,
               bbSigma: side.bbSigma,
               emaPeriod: side.emaPeriod,
-              extraSigmas: AppScope.of(context).settings.chartSigmas,
+              sigmas: AppScope.of(context).settings.chartSigmas,
               extraEmas: AppScope.of(context).settings.chartEmas,
               height: 220,
               lines: [

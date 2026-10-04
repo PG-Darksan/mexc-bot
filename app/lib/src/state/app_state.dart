@@ -69,6 +69,19 @@ class AppState extends ChangeNotifier {
   String? _assetError;
   bool _refreshingAsset = false;
 
+  /// 端末から取引所へ直接聞いた建玉と決済の記録。サーバーが返すのは
+  /// ボットが建てた建玉だけなので、手で建てたものはこちらで拾う。
+  List<PositionInfo> _exchangeOpen = const [];
+  List<PositionInfo>? _exchangeClosed;
+  Map<String, double> _lastPrices = const {};
+  Map<String, double> _contractSizes = const {};
+  String? _exchangeError;
+  bool _refreshingExchange = false;
+  Timer? _exchangeTimer;
+
+  /// 取引所の建玉を取り直す間隔。
+  static const Duration exchangeRefreshInterval = Duration(seconds: 30);
+
   static const int maxEvents = 500;
 
   AppSettings get settings => _settings;
@@ -87,6 +100,22 @@ class AppState extends ChangeNotifier {
   DateTime? get assetFetchedAt => _assetFetchedAt;
   String? get assetError => _assetError;
   bool get refreshingAsset => _refreshingAsset;
+
+  /// ボットが管理していない、取引所にある建玉 (手で建てたものなど)。
+  List<PositionInfo> get foreignPositions =>
+      exchangeOnlyPositions(_snapshot.positions, _exchangeOpen);
+
+  /// 取引所の決済の記録。端末から取れていなければ null。
+  List<PositionInfo>? get exchangeClosed => _exchangeClosed;
+
+  /// 端末から取引所へ聞けなかった理由。
+  String? get exchangeError => _exchangeError;
+
+  /// 銘柄の現在値。ボットのものが無ければ端末で取ったものを使う。
+  double? lastPriceOf(String symbol) =>
+      _snapshot.markPrices[symbol] ?? _lastPrices[symbol];
+
+  double contractSizeOf(String symbol) => _contractSizes[symbol] ?? 1;
 
   Future<void> initialize() async {
     _settings = await _store.loadAppSettings();
@@ -264,6 +293,36 @@ class AppState extends ChangeNotifier {
     }
     final controller = _controller;
     if (controller != null) unawaited(controller.refreshAccount());
+    unawaited(refreshExchange());
+  }
+
+  /// 取引所の建玉と決済の記録を、端末から直接取り直す。
+  Future<void> refreshExchange() async {
+    final account = _account;
+    if (account == null || _refreshingExchange) return;
+    _refreshingExchange = true;
+    try {
+      // 順に聞く (並べて聞くと、1 つが失敗したときに残りの失敗を拾い損ねる)。
+      final results = (
+        await account.fetchOpenPositions(),
+        await account.fetchClosedPositions(),
+        await account.fetchLastPrices(),
+        await account.contractSizes(),
+      );
+      // 待っている間に鍵が変わっていたら、古い結果は捨てる。
+      if (!identical(account, _account)) return;
+      _exchangeOpen = results.$1;
+      _exchangeClosed = results.$2;
+      _lastPrices = results.$3;
+      _contractSizes = results.$4;
+      _exchangeError = null;
+    } catch (e) {
+      if (!identical(account, _account)) return;
+      _exchangeError = '$e';
+    } finally {
+      _refreshingExchange = false;
+      notifyListeners();
+    }
   }
 
   /// 残高を直接取る口を、いまの動かし方と鍵に合わせて作り直す。
@@ -273,12 +332,22 @@ class AppState extends ChangeNotifier {
     _liveAsset = null;
     _assetFetchedAt = null;
     _assetError = null;
-    // サーバー接続でも、端末に鍵があれば残高だけは直接取れる (そのほうが速い)。
+    _exchangeOpen = const [];
+    _exchangeClosed = null;
+    _exchangeError = null;
+    _exchangeTimer?.cancel();
+    _exchangeTimer = null;
+    // サーバー接続でも、端末に鍵があれば残高・建玉・決済の記録は直接取る
+    // (そのほうが速く、手で建てた建玉も見える)。
     if (!_credentials.isEmpty) {
       _account = AccountDataSource(
         apiKey: _credentials.apiKey,
         apiSecret: _credentials.apiSecret,
       );
+      unawaited(refreshExchange());
+      _exchangeTimer = Timer.periodic(exchangeRefreshInterval, (_) {
+        unawaited(refreshExchange());
+      });
     }
   }
 
@@ -372,6 +441,7 @@ class AppState extends ChangeNotifier {
   /// アプリを終わらせる前の後片付け。建玉を保存し、接続を閉じる。
   Future<void> shutdown() async {
     _persistTimer?.cancel();
+    _exchangeTimer?.cancel();
     await _persistPositions();
     await _snapshotSub?.cancel();
     await _eventSub?.cancel();
@@ -385,6 +455,7 @@ class AppState extends ChangeNotifier {
     chartRequest.dispose();
     _account?.dispose();
     _persistTimer?.cancel();
+    _exchangeTimer?.cancel();
     await _persistPositions();
     await _snapshotSub?.cancel();
     await _eventSub?.cancel();
@@ -392,4 +463,21 @@ class AppState extends ChangeNotifier {
     await _controller?.dispose();
     super.dispose();
   }
+}
+
+/// 取引所の建玉のうち、ボットが管理していないもの。
+///
+/// 銘柄と向きが同じボットの建玉があれば、それと同じものとみなす
+/// (一方向モードなので、同じ銘柄・同じ向きの建玉は 1 つしかない)。
+List<PositionInfo> exchangeOnlyPositions(
+  List<ManagedPosition> managed,
+  List<PositionInfo> exchange,
+) {
+  final known = {
+    for (final p in managed) '${p.symbol}|${p.direction.positionType}',
+  };
+  return [
+    for (final p in exchange)
+      if (!known.contains('${p.symbol}|${p.positionType}')) p,
+  ];
 }

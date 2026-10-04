@@ -57,8 +57,8 @@ class _OverlaySheet extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              '判定に使うバンド (${sigmaLabel(side.bbSigma)}) と利確に使う '
-              'EMA${side.emaPeriod} はいつも描きます。',
+              '利確に使う EMA${side.emaPeriod} はいつも描きます。'
+              '判定に使うバンドは ±${sigmaLabel(side.bbSigma)} です。',
               style: theme.textTheme.bodySmall,
             ),
             const SizedBox(height: 16),
@@ -71,18 +71,19 @@ class _OverlaySheet extends StatelessWidget {
               spacing: 8,
               runSpacing: 6,
               children: [
-                for (final s in _sigmas)
+                for (final s in {..._sigmas, side.bbSigma}.toList()..sort())
                   FilterChip(
-                    label: Text('±${sigmaLabel(s)}'),
-                    selected:
-                        s == side.bbSigma || settings.chartSigmas.contains(s),
-                    onSelected: s == side.bbSigma
-                        ? null
-                        : (on) => setSigmas(
-                            on
-                                ? [...settings.chartSigmas, s]
-                                : ([...settings.chartSigmas]..remove(s)),
-                          ),
+                    label: Text(
+                      s == side.bbSigma
+                          ? '±${sigmaLabel(s)} (判定)'
+                          : '±${sigmaLabel(s)}',
+                    ),
+                    selected: settings.chartSigmas.contains(s),
+                    onSelected: (on) => setSigmas(
+                      on
+                          ? [...settings.chartSigmas, s]
+                          : ([...settings.chartSigmas]..remove(s)),
+                    ),
                   ),
               ],
             ),

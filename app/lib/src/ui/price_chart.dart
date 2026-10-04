@@ -58,7 +58,7 @@ class PriceChart extends StatelessWidget {
     required this.bbPeriod,
     required this.bbSigma,
     required this.emaPeriod,
-    this.extraSigmas = const [],
+    this.sigmas = const [],
     this.extraEmas = const [],
     this.visibleBars = defaultVisibleBars,
     this.lines = const [],
@@ -71,13 +71,15 @@ class PriceChart extends StatelessWidget {
 
   final List<Candle> candles;
 
-  /// 判定に使うバンドと EMA。いつも描く。
+  /// バンドの期間と、判定に使う σ (選ばれていれば太く描く)。
   final int bbPeriod;
   final double bbSigma;
+
+  /// 利確に使う EMA。いつも描く。
   final int emaPeriod;
 
-  /// 足して描くバンドの σ と EMA の期間 (チャートの「線の表示」で選ぶ)。
-  final List<double> extraSigmas;
+  /// 描くバンドの σ と、足して描く EMA の期間 (チャートの「線の表示」で選ぶ)。
+  final List<double> sigmas;
   final List<int> extraEmas;
 
   final int visibleBars;
@@ -112,14 +114,15 @@ class PriceChart extends StatelessWidget {
 
     final shown = tail(candles);
     final bands = tail(_bollingerSeries(closes, bbPeriod, bbSigma));
+    final showStrategy = sigmas.contains(bbSigma);
     final emas = tail(Indicators.emaSeries(closes, emaPeriod));
     // σ を変えても平均と標準偏差は同じなので、判定のバンドから引き直す。
-    final sigmas = {
-      for (final s in extraSigmas)
+    final others = {
+      for (final s in sigmas)
         if (s > 0 && s != bbSigma) s,
     }.toList()..sort();
     final extraBands = [
-      for (final s in sigmas)
+      for (final s in others)
         (
           upper: [
             for (final b in bands)
@@ -149,7 +152,7 @@ class PriceChart extends StatelessWidget {
       maxPrice = math.max(maxPrice, c.high);
     }
     for (final b in bands) {
-      if (b == null) continue;
+      if (b == null || !showStrategy) continue;
       minPrice = math.min(minPrice, b.lower);
       maxPrice = math.max(maxPrice, b.upper);
     }
@@ -187,6 +190,8 @@ class PriceChart extends StatelessWidget {
         candles: shown,
         bands: bands,
         emas: emas,
+        showStrategyBand: showStrategy,
+        showMiddle: showStrategy || others.isNotEmpty,
         extraBands: extraBands,
         extraEmas: extraEmaLines,
         lines: lines,
@@ -220,11 +225,12 @@ class PriceChart extends StatelessWidget {
 
     // どの線が何かを、チャートのすぐ下に小さく出す。
     final legend = <(String, Color)>[
-      (
-        'BB($bbPeriod) ${_trimNumber(bbSigma)}σ (判定)',
-        theme.colorScheme.tertiary,
-      ),
-      for (final s in sigmas) ('${_trimNumber(s)}σ', _extraColor(s)),
+      if (showStrategy)
+        (
+          'BB($bbPeriod) ${_trimNumber(bbSigma)}σ (判定)',
+          theme.colorScheme.tertiary,
+        ),
+      for (final s in others) ('${_trimNumber(s)}σ', _extraColor(s)),
       ('EMA$emaPeriod (利確)', theme.colorScheme.primary),
       for (final p in periods) ('EMA$p', _extraColor(p)),
     ];
@@ -296,6 +302,8 @@ class _PriceChartPainter extends CustomPainter {
     required this.candles,
     required this.bands,
     required this.emas,
+    required this.showStrategyBand,
+    required this.showMiddle,
     required this.extraBands,
     required this.extraEmas,
     required this.lines,
@@ -315,6 +323,8 @@ class _PriceChartPainter extends CustomPainter {
   final List<Candle> candles;
   final List<BollingerPoint?> bands;
   final List<double?> emas;
+  final bool showStrategyBand;
+  final bool showMiddle;
   final List<({List<double?> upper, List<double?> lower, Color color})>
   extraBands;
   final List<({List<double?> values, Color color})> extraEmas;
@@ -433,13 +443,17 @@ class _PriceChartPainter extends CustomPainter {
       stroke(band.upper, band.color.withValues(alpha: 0.85), 0.9);
       stroke(band.lower, band.color.withValues(alpha: 0.85), 0.9);
     }
-    stroke([for (final b in bands) b?.upper], bandColor, 1.2);
-    stroke([for (final b in bands) b?.lower], bandColor, 1.2);
-    stroke(
-      [for (final b in bands) b?.middle],
-      bandColor.withValues(alpha: 0.45),
-      1,
-    );
+    if (showStrategyBand) {
+      stroke([for (final b in bands) b?.upper], bandColor, 1.2);
+      stroke([for (final b in bands) b?.lower], bandColor, 1.2);
+    }
+    if (showMiddle) {
+      stroke(
+        [for (final b in bands) b?.middle],
+        bandColor.withValues(alpha: 0.45),
+        1,
+      );
+    }
     for (final ema in extraEmas) {
       stroke(ema.values, ema.color, 1.1);
     }

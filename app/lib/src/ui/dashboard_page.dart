@@ -67,15 +67,14 @@ class AccountSection extends StatelessWidget {
   }
 }
 
-/// 成績・稼働状況・売買の条件。ホームに置く (検知の記録は履歴タブで見る)。
-class StatusSections extends StatelessWidget {
-  const StatusSections({super.key});
+/// 成績。ホームの下のほうに置く。
+class PerformanceSection extends StatelessWidget {
+  const PerformanceSection({super.key});
 
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
     final snapshot = state.snapshot;
-    final config = snapshot.config;
 
     final closed = snapshot.closedPositions;
     final wins = closed.where((p) => (p.realizedPnl ?? 0) > 0).length;
@@ -108,8 +107,24 @@ class StatusSections extends StatelessWidget {
           'この端末に記録が残っている決済の集計です。'
           '履歴タブで消した分は含みません。',
         ),
-        const SizedBox(height: 24),
+      ],
+    );
+  }
+}
 
+/// 稼働状況。
+class RunningStatusSection extends StatelessWidget {
+  const RunningStatusSection({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppScope.of(context);
+    final snapshot = state.snapshot;
+    final config = snapshot.config;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
         // ── 稼働状況 ──
         _SectionTitle('稼働状況'),
         _StatGrid(
@@ -160,65 +175,94 @@ class StatusSections extends StatelessWidget {
               : '止まっています。監視する銘柄は動いているときに決め直すので、'
                     '出来高の下限などを変えたときは「開始」すると反映されます。',
         ),
-        const SizedBox(height: 24),
-        _SectionTitle('売買の条件'),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 方向に依らない条件。出来高・時間軸・指標の期間は
-                // 方向ごとなので、下のショート / ロングの欄に出す。
-                Wrap(
-                  spacing: 24,
-                  runSpacing: 12,
-                  children: [
-                    _Condition(
-                      '判定間隔',
-                      '${config.evaluationIntervalSeconds} 秒ごと',
-                    ),
-                    const _Condition('エントリー', '成行 / 分離マージン'),
-                  ],
-                ),
-                const Divider(height: 24),
-                // ショートとロングは同じ並びで、広い画面では左右に置く。
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final cards = [
-                      for (final side in config.enabledSides)
-                        _SideConditions(side: side, config: config),
-                    ];
-                    if (cards.isEmpty) {
-                      return const Text('ショートもロングも切ってあります。');
-                    }
-                    if (constraints.maxWidth < 560 || cards.length == 1) {
-                      return Column(
+      ],
+    );
+  }
+}
+
+/// 売買の条件。畳んでおけるようにする。
+class TradeConditionsSection extends StatelessWidget {
+  const TradeConditionsSection({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final config = AppScope.of(context).snapshot.config;
+    return Card(
+      child: Theme(
+        // 開け閉めしたときに出る線を消す。
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          key: const PageStorageKey('trade-conditions'),
+          title: Text(
+            '売買の条件',
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+          ),
+          subtitle: Text(
+            config.enabledSides.map((s) => s.direction.label).join(' / '),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+          childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          expandedCrossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: EdgeInsets.zero,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 方向に依らない条件。出来高・時間軸・指標の期間は
+                  // 方向ごとなので、下のショート / ロングの欄に出す。
+                  Wrap(
+                    spacing: 24,
+                    runSpacing: 12,
+                    children: [
+                      _Condition(
+                        '判定間隔',
+                        '${config.evaluationIntervalSeconds} 秒ごと',
+                      ),
+                      const _Condition('エントリー', '成行 / 分離マージン'),
+                    ],
+                  ),
+                  const Divider(height: 24),
+                  // ショートとロングは同じ並びで、広い画面では左右に置く。
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final cards = [
+                        for (final side in config.enabledSides)
+                          _SideConditions(side: side, config: config),
+                      ];
+                      if (cards.isEmpty) {
+                        return const Text('ショートもロングも切ってあります。');
+                      }
+                      if (constraints.maxWidth < 560 || cards.length == 1) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (var i = 0; i < cards.length; i++) ...[
+                              if (i > 0) const SizedBox(height: 16),
+                              cards[i],
+                            ],
+                          ],
+                        );
+                      }
+                      return Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          for (var i = 0; i < cards.length; i++) ...[
-                            if (i > 0) const SizedBox(height: 16),
-                            cards[i],
-                          ],
+                          Expanded(child: cards[0]),
+                          const SizedBox(width: 16),
+                          Expanded(child: cards[1]),
                         ],
                       );
-                    }
-                    return Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(child: cards[0]),
-                        const SizedBox(width: 16),
-                        Expanded(child: cards[1]),
-                      ],
-                    );
-                  },
-                ),
-              ],
+                    },
+                  ),
+                ],
+              ),
             ),
-          ),
+          ],
         ),
-        const SizedBox(height: 16),
-      ],
+      ),
     );
   }
 }

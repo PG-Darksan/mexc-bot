@@ -26,10 +26,12 @@ void main() {
       SettingsPage(),
       LogPage(),
       AccountSection(),
-      StatusSections(),
+      PerformanceSection(),
+      RunningStatusSection(),
+      TradeConditionsSection(),
       PriceChart(candles: [], bbPeriod: 20, bbSigma: 4, emaPeriod: 5),
     ];
-    expect(widgets, hasLength(9));
+    expect(widgets, hasLength(11));
   });
 
   test('MexcBotApp の型が揃っている', () {
