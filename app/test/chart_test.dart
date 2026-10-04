@@ -72,9 +72,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(state.settings.chartEmas, isNot(contains(50)));
 
-    await tester.tap(find.text('±5σ'));
+    // ±1σ と ±5σ は選べない。
+    expect(find.text('±1σ'), findsNothing);
+    expect(find.text('±5σ'), findsNothing);
+    await tester.tap(find.text('±3σ'));
     await tester.pumpAndSettle();
-    expect(state.settings.chartSigmas, containsAll([2.0, 3.0, 5.0]));
+    expect(state.settings.chartSigmas, isNot(contains(3.0)));
+    await tester.tap(find.text('±3σ'));
+    await tester.pumpAndSettle();
+    expect(state.settings.chartSigmas, contains(3.0));
 
     // 判定に使うバンドも外せる。
     await tester.tap(find.text('±4σ (判定)'));
@@ -114,5 +120,10 @@ void main() {
       'chartSigmas': [2, 3],
     });
     expect(restored.chartSigmas, [2.0, 3.0, 4.0]);
+  });
+
+  test('以前に選んだ ±1σ・±5σ は描かない (判定の σ なら描く)', () {
+    expect(visibleChartSigmas([1, 2, 3, 5], 4), [2.0, 3.0]);
+    expect(visibleChartSigmas([2, 5], 5), [2.0, 5.0]);
   });
 }

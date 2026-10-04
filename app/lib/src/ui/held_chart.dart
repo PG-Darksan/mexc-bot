@@ -254,7 +254,7 @@ class _HeldPositionChartState extends State<HeldPositionChart> {
                       bbPeriod: side.bbPeriod,
                       bbSigma: side.bbSigma,
                       emaPeriod: side.emaPeriod,
-                      sigmas: settings.chartSigmas,
+                      sigmas: visibleChartSigmas(settings.chartSigmas, side.bbSigma),
                       extraEmas: settings.chartEmas,
                       height: 220,
                       lines: [

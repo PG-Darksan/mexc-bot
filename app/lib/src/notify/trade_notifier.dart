@@ -103,6 +103,17 @@ TradeMessage closedMessage(ManagedPosition p) => (
       '${p.note == null ? '' : ' (${p.note})'}',
 );
 
+/// サーバーのボットが動き出した / 止まったときの文面。
+TradeMessage runningMessage(bool running) => running
+    ? (
+        title: 'ボットを開始しました',
+        body: 'サーバーで売買を始めました。「停止」を押すまで動き続けます。',
+      )
+    : (
+        title: 'ボットを停止しました',
+        body: 'サーバーのボットが止まりました。建玉と預けた利確はそのまま残ります。',
+      );
+
 /// 状態の移り変わりから、新しく建った建玉と決済された建玉を拾う。
 ///
 /// 繋いだ直後 ([reset] の後) の 1 回目は、いまある分を覚えるだけで何も

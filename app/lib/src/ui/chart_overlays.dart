@@ -2,6 +2,16 @@ import 'package:flutter/material.dart';
 
 import '../app.dart';
 
+/// 選べるバンドの σ。判定に使う σ がこれ以外なら、それも選べる。
+const List<double> chartSigmaChoices = [2, 3, 4];
+
+/// 選んだバンドのうち、チャートに描くもの。以前の版で選んだ ±1σ・±5σ など、
+/// いまは選べない σ は描かない (外す手段が無くなるため)。
+List<double> visibleChartSigmas(List<double> chosen, double strategySigma) => [
+  for (final s in chosen)
+    if (chartSigmaChoices.contains(s) || s == strategySigma) s,
+];
+
 /// チャートに足して描く線を選ぶボタン。どのチャートでも同じ選択を使う。
 class ChartOverlayButton extends StatelessWidget {
   const ChartOverlayButton({super.key});
@@ -24,7 +34,6 @@ class ChartOverlayButton extends StatelessWidget {
 class _OverlaySheet extends StatelessWidget {
   const _OverlaySheet();
 
-  static const List<double> _sigmas = [1, 2, 3, 4, 5];
   static const List<int> _emas = [20, 50, 100, 150, 200];
 
   @override
@@ -71,7 +80,7 @@ class _OverlaySheet extends StatelessWidget {
               spacing: 8,
               runSpacing: 6,
               children: [
-                for (final s in {..._sigmas, side.bbSigma}.toList()..sort())
+                for (final s in {...chartSigmaChoices, side.bbSigma}.toList()..sort())
                   FilterChip(
                     label: Text(
                       s == side.bbSigma

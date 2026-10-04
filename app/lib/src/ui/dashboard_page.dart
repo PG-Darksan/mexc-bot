@@ -36,7 +36,7 @@ class AccountSection extends StatelessWidget {
           ],
         ),
         if (state.connection != ControllerConnection.connected)
-          const _Note('サーバーにつながると残高が表示されます。')
+          const _Note('サーバーに繋がると残高が表示されます。')
         else if (!hasKey)
           const _Note('サーバーに取引所の API キーが入っていません。')
         else if (asset == null)

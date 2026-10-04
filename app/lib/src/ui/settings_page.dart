@@ -97,7 +97,7 @@ class _SettingsPageState extends State<SettingsPage> {
     if (!mounted) return;
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(const SnackBar(content: Text('接続設定を保存してつなぎ直しました')));
+    ).showSnackBar(const SnackBar(content: Text('接続設定を保存して繋ぎ直しました')));
   }
 
   /// URL とトークンのどちらが悪いのかを切り分ける。
@@ -479,26 +479,20 @@ class _SettingsPageState extends State<SettingsPage> {
                         ],
                       ),
                       const _Hint(
-                        '同時に持てる件数に上限はありません。'
-                        'ただし建玉のある銘柄には、向きが同じでも違っても新規注文を出しません。'
-                        '決済してからは「再エントリー待ち」の間だけ間を置きます。\n'
+                        '同時に持てる件数に上限はありません。\n'
+                        'ポジションを持っている銘柄は、持っている間は 1 回だけ発火します '
+                        '(向きが同じでも違っても重ねて建てません)。'
+                        '決済してからは「再エントリー待ち」の間だけ間を置き、'
+                        'そのあとは同じ足でももう一度入れます。\n'
                         '新規建ては成行・分離マージン、利確は発注と同時に取引所へ預け、'
-                        '資金調達率のフィルタは常に効きます (切り替えはありません)。\n'
-                        'MEXC 側も「一方向モード」にしてください。'
-                        '食い違うと決済注文が通らず、起動時に警告が出ます。',
-                      ),
-                      _CompactSwitch(
-                        label: '同じ足では1回だけ発火させる',
-                        value: draft.oneSignalPerBar,
-                        onChanged: (v) =>
-                            _update((c) => c.copyWith(oneSignalPerBar: v)),
+                        '資金調達率のフィルタは常に効きます (切り替えはありません)。',
                       ),
                     ],
                   ),
 
                   _Group(
                     title: 'サーバーへの接続',
-                    description: 'ボットはサーバーで動きます。アプリはつないで見る・操作するだけです。',
+                    description: 'ボットはサーバーで動きます。アプリは繋いで見る・操作するだけです。',
                     children: [
                         const SizedBox(height: 8),
                         TextField(
@@ -528,10 +522,20 @@ class _SettingsPageState extends State<SettingsPage> {
                             Expanded(
                               child: FilledButton.tonalIcon(
                                 onPressed: () => unawaited(_applyConnection()),
+                                style: FilledButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                  ),
+                                ),
                                 icon: const Icon(Icons.link, size: 16),
-                                label: const Text(
-                                  '保存してつなぎ直す',
-                                  style: TextStyle(fontSize: 12),
+                                // 狭い画面でも 1 行に収める (入り切らなければ縮める)。
+                                label: const FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text(
+                                    '保存して繋ぎ直す',
+                                    maxLines: 1,
+                                    style: TextStyle(fontSize: 12),
+                                  ),
                                 ),
                               ),
                             ),
@@ -550,9 +554,18 @@ class _SettingsPageState extends State<SettingsPage> {
                                         ),
                                       )
                                     : const Icon(Icons.network_check, size: 16),
-                                label: const Text(
-                                  '接続を試す',
-                                  style: TextStyle(fontSize: 12),
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                  ),
+                                ),
+                                label: const FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text(
+                                    '接続を試す',
+                                    maxLines: 1,
+                                    style: TextStyle(fontSize: 12),
+                                  ),
                                 ),
                               ),
                             ),
@@ -570,7 +583,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           '接続トークンは、サーバーを立てたときに deploy/setup.sh が作る '
                           'BOT_TOKEN と同じ値です (サーバーの /etc/mexc-bot/env に'
                           '入っています)。前後の空白や改行は取り除いて送ります。\n'
-                          'URL とトークンは入れ終わってから「保存してつなぎ直す」を'
+                          'URL とトークンは入れ終わってから「保存して繋ぎ直す」を'
                           '押してください。',
                         ),
                       const _Hint(
@@ -638,9 +651,9 @@ class _ConnectionStatus extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final (label, color) = switch (connection) {
-      ControllerConnection.connected => ('つながっています', Colors.green),
-      ControllerConnection.connecting => ('つなぎ中', Colors.orange),
-      ControllerConnection.error => ('つながっていません', theme.colorScheme.error),
+      ControllerConnection.connected => ('繋がっています', Colors.green),
+      ControllerConnection.connecting => ('繋ぎ中', Colors.orange),
+      ControllerConnection.error => ('繋がっていません', theme.colorScheme.error),
       ControllerConnection.disconnected => ('未接続', theme.colorScheme.outline),
     };
     final result = check;

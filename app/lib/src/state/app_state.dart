@@ -31,6 +31,9 @@ class AppState extends ChangeNotifier {
   final TradeNotifier? _notifier;
   final PositionChangeTracker _changes = PositionChangeTracker();
 
+  /// 前に届いた状態で、ボットが動いていたか。繋いだ直後は null (知らせない)。
+  bool? _lastRunning;
+
   AppSettings _settings = const AppSettings();
   StrategyConfig _config = const StrategyConfig();
   RemoteBotController? _controller;
@@ -150,6 +153,7 @@ class AppState extends ChangeNotifier {
     _controller = controller;
     // 繋ぎ先が変わったので、建玉の覚えを取り直す (前からある分は知らせない)。
     _changes.reset();
+    _lastRunning = null;
     _snapshotSub = controller.snapshots.listen((s) {
       _snapshot = s;
       // サーバー側の設定を正とする。
@@ -182,10 +186,16 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 建てた / 決済したことを、端末の通知で知らせる。
+  /// 建てた / 決済したこと、ボットが動き出した / 止まったことを、端末の
+  /// 通知で知らせる。
   void _notifyTrades(BotSnapshot snapshot) {
+    final wasRunning = _lastRunning;
+    _lastRunning = snapshot.running;
     final notifier = _notifier;
     if (notifier == null) return;
+    if (wasRunning != null && wasRunning != snapshot.running) {
+      unawaited(notifier.show(runningMessage(snapshot.running)));
+    }
     final changes = _changes.update(snapshot);
     for (final p in changes.opened) {
       unawaited(notifier.show(openedMessage(p)));
