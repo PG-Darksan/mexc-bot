@@ -46,8 +46,12 @@ chmod 700 "$ENV_DIR"
 echo "==> ビルドする"
 cd "$SRC_DIR/packages/mexc_core" && dart pub get
 cd "$SRC_DIR/packages/mexc_server" && dart pub get
-dart compile exe bin/server.dart -o "$APP_DIR/mexc-bot-server"
-chmod 755 "$APP_DIR/mexc-bot-server"
+# 動いているボットの実行ファイルには上書きできない (Text file busy) ので、
+# 別名で作ってから差し替える。動いているプロセスは古いファイルのまま走り、
+# 下の restart で新しいものに替わる。
+dart compile exe bin/server.dart -o "$APP_DIR/mexc-bot-server.new"
+chmod 755 "$APP_DIR/mexc-bot-server.new"
+mv -f "$APP_DIR/mexc-bot-server.new" "$APP_DIR/mexc-bot-server"
 
 if [[ ! -f "$ENV_DIR/env" ]]; then
   echo "==> 環境変数ファイルのひな形を作る"
