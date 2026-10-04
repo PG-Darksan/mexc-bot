@@ -6,13 +6,12 @@ import 'package:mexc_core/mexc_core.dart';
 import 'package:test/test.dart';
 
 /// 送り直しの決まり。通信はしない (MockClient で返事を作る)。
-MexcRestClient _client(MockClient http, {Duration? timeout}) =>
-    MexcRestClient(
-      apiKey: 'key',
-      apiSecret: 'secret',
-      httpClient: http,
-      timeout: timeout ?? const Duration(seconds: 15),
-    );
+MexcRestClient _client(MockClient http, {Duration? timeout}) => MexcRestClient(
+  apiKey: 'key',
+  apiSecret: 'secret',
+  httpClient: http,
+  timeout: timeout ?? const Duration(seconds: 15),
+);
 
 /// 成行のショート 1 枚。
 Future<OrderResult> _order(MexcRestClient client) => client.createOrder(
@@ -24,10 +23,8 @@ Future<OrderResult> _order(MexcRestClient client) => client.createOrder(
   openType: 1,
 );
 
-http.Response _ok(Object data) => http.Response(
-  jsonEncode({'success': true, 'code': 0, 'data': data}),
-  200,
-);
+http.Response _ok(Object data) =>
+    http.Response(jsonEncode({'success': true, 'code': 0, 'data': data}), 200);
 
 http.Response _error(int code) => http.Response(
   jsonEncode({'success': false, 'code': code, 'message': 'error'}),
@@ -104,6 +101,40 @@ void main() {
         _order(client),
         throwsA(isA<MexcApiException>().having((e) => e.code, 'code', 2005)),
       );
+    });
+  });
+
+  group('決済済みの建玉', () {
+    final closed = {
+      'positionId': 1,
+      'symbol': 'TAKE_USDT',
+      'positionType': 2,
+      'state': 3,
+      'closeVol': 5,
+      'openAvgPrice': 0.19486,
+      'closeAvgPrice': 0.14945,
+      'realised': 2.2636,
+      'updateTime': 1758636291000,
+    };
+
+    test('一覧そのものが返る形', () async {
+      final client = _client(MockClient((_) async => _ok([closed])));
+      final list = await client.fetchHistoryPositions();
+      expect(list.single.closeAvgPrice, 0.14945);
+      expect(list.single.realised, 2.2636);
+    });
+
+    test('ページ情報に包まれて返る形', () async {
+      final client = _client(
+        MockClient(
+          (_) async => _ok({
+            'resultList': [closed],
+            'totalCount': 1,
+          }),
+        ),
+      );
+      final list = await client.fetchHistoryPositions();
+      expect(list.single.symbol, 'TAKE_USDT');
     });
   });
 

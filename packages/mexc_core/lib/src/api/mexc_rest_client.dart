@@ -198,6 +198,32 @@ class MexcRestClient {
         .toList();
   }
 
+  /// 決済済みの建玉。新しい順に [pageSize] 件まで。
+  ///
+  /// ボットが建てたものだけでなく、手で建てたものも入る。
+  Future<List<PositionInfo>> fetchHistoryPositions({
+    String? symbol,
+    int pageSize = 100,
+  }) async {
+    await _queryLimiter.acquire();
+    final data = await _privateGet(
+      '/api/v1/private/position/list/history_positions',
+      query: {
+        if (symbol != null) 'symbol': symbol,
+        'page_num': '1',
+        'page_size': '$pageSize',
+      },
+    );
+    // 一覧そのものが返る場合と、ページ情報に包まれて返る場合がある。
+    final list = switch (data) {
+      final List<dynamic> l => l,
+      final Map<String, dynamic> m => (m['resultList'] as List?) ?? const [],
+      _ => const [],
+    };
+    return list.cast<Map<String, dynamic>>().map(PositionInfo.fromJson).toList()
+      ..sort((a, b) => b.updateTime.compareTo(a.updateTime));
+  }
+
   /// 建玉モード (1=ヘッジ / 2=一方向)。
   Future<int> fetchPositionMode() async {
     await _queryLimiter.acquire();
