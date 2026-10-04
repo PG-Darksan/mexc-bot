@@ -1,9 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mexc_bot_app/src/notify/trade_notifier.dart';
-import 'package:mexc_bot_app/src/settings/settings_store.dart';
 import 'package:mexc_bot_app/src/state/app_state.dart';
 import 'package:mexc_core/mexc_core.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 ManagedPosition _position(
   String id, {
@@ -102,20 +100,6 @@ void main() {
     );
     expect(closed.title, '決済しました: TAKEUSDT +2.2636 USDT');
     expect(closed.body, endsWith('(利確)'));
-  });
-
-  test('ローカル実行では「開始」から「停止」までを覚えておく', () async {
-    SharedPreferences.setMockInitialValues({});
-    final store = SettingsStore();
-    final state = AppState(store);
-
-    await state.start();
-    expect(state.settings.wasRunning, isTrue);
-    // 閉じて開き直しても覚えている (次に開いたとき続きから動かす)。
-    expect((await store.loadAppSettings()).wasRunning, isTrue);
-
-    await state.stop();
-    expect((await store.loadAppSettings()).wasRunning, isFalse);
   });
 
   test('取引所の建玉のうち、ボットが管理していないものだけを拾う', () {

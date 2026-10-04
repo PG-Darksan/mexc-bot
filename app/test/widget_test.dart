@@ -30,28 +30,23 @@ void main() {
   });
 
   group('アプリ設定', () {
-    test('既定はローカル実行', () {
-      const settings = AppSettings();
-      expect(settings.mode, RunMode.local);
-    });
-
     test('JSON と往復できる', () {
       const settings = AppSettings(
-        mode: RunMode.remote,
         serverUrl: 'wss://example.com/ws',
         serverToken: 'secret',
-        wasRunning: true,
       );
       final restored = AppSettings.fromJson(settings.toJson());
-      expect(restored.mode, RunMode.remote);
       expect(restored.serverUrl, 'wss://example.com/ws');
       expect(restored.serverToken, 'secret');
-      expect(restored.wasRunning, isTrue);
     });
 
-    test('以前の「起動と同時に動かす」がオンなら、続きから動かす', () {
-      final restored = AppSettings.fromJson({'autoStartBot': true});
-      expect(restored.wasRunning, isTrue);
+    test('以前の版の動かし方 (ローカル実行) の設定は読み飛ばす', () {
+      final restored = AppSettings.fromJson({
+        'mode': 'local',
+        'wasRunning': true,
+        'serverUrl': 'ws://100.64.0.1:8080/ws',
+      });
+      expect(restored.serverUrl, 'ws://100.64.0.1:8080/ws');
     });
   });
 }

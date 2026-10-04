@@ -194,12 +194,13 @@ class _NoticeBarState extends State<_NoticeBar> {
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
     final messages = <String>[
-      if (state.notice != null) state.notice!,
       if (state.snapshot.lastError != null)
         'さっきのエラー: ${state.snapshot.lastError}',
-      if (state.isLocalMode && state.credentials.isEmpty)
-        'APIキーが未設定です。注文を出すには設定タブで登録してください。',
-      if (!state.isLocalMode && state.connection == ControllerConnection.error)
+      if (state.connection == ControllerConnection.connected &&
+          !state.snapshot.credentialsConfigured)
+        'サーバーに取引所の API キーが入っていません。注文は出ません '
+            '(サーバーの /etc/mexc-bot/env に入れてください)。',
+      if (state.connection == ControllerConnection.error)
         'サーバーに繋がりません。設定タブのURLと接続トークン、'
             'サーバーが動いているかを確認してください。',
     ];
@@ -234,7 +235,6 @@ class _NoticeBarState extends State<_NoticeBar> {
               color: theme.colorScheme.onErrorContainer,
               onPressed: () {
                 setState(() => _dismissed.addAll(visible));
-                state.dismissNotice();
               },
             ),
           ],
@@ -242,12 +242,4 @@ class _NoticeBarState extends State<_NoticeBar> {
       ),
     );
   }
-}
-
-/// アプリ設定の実行モードを画面から切り替えるための小物。
-extension RunModeLabel on RunMode {
-  String get label => switch (this) {
-    RunMode.local => 'ローカル実行 (この端末だけで動かす)',
-    RunMode.remote => 'サーバー接続 (常駐サーバーを操作する)',
-  };
 }

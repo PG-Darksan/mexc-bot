@@ -13,8 +13,8 @@ class AccountSection extends StatelessWidget {
     final state = AppScope.of(context);
     final snapshot = state.snapshot;
     final asset = state.displayAsset;
-    // 端末に鍵があれば直接取れる。無ければサーバーが持っているかで判断する。
-    final hasKey = !state.credentials.isEmpty || snapshot.credentialsConfigured;
+    // 残高はサーバーが取引所から取る。鍵はサーバーにある。
+    final hasKey = snapshot.credentialsConfigured;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -35,12 +35,10 @@ class AccountSection extends StatelessWidget {
             ),
           ],
         ),
-        if (!hasKey)
-          const _Note('APIキーを設定すると残高が表示されます (設定タブ)。')
-        // 端末から直接取れなくても、サーバー (やローカルのエンジン) から
-        // 残高が届いていれば困らないので、知らせない。
-        else if (asset == null && state.assetError != null)
-          _Note('取得できませんでした: ${state.assetError}')
+        if (state.connection != ControllerConnection.connected)
+          const _Note('サーバーにつながると残高が表示されます。')
+        else if (!hasKey)
+          const _Note('サーバーに取引所の API キーが入っていません。')
         else if (asset == null)
           const _Note('「更新」を押すと残高を取得します。'),
         _StatGrid(
@@ -60,8 +58,6 @@ class AccountSection extends StatelessWidget {
             ),
           ],
         ),
-        if (state.assetFetchedAt != null)
-          _Note('取得時刻: ${formatTime(state.assetFetchedAt)}'),
       ],
     );
   }
@@ -129,8 +125,7 @@ class RunningStatusSection extends StatelessWidget {
         _SectionTitle('稼働状況'),
         _StatGrid(
           items: [
-            if (!state.isLocalMode)
-              _Stat(
+            _Stat(
                 'サーバー',
                 switch (state.connection) {
                   ControllerConnection.connected => '接続中',

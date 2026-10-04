@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:mexc_core/mexc_core.dart';
 
-import '../data/account_data.dart';
 import '../notify/trade_notifier.dart';
 import '../settings/app_settings.dart';
 import '../settings/settings_store.dart';
@@ -20,8 +19,9 @@ class ChartRequest {
 
 /// アプリ全体の状態。
 ///
-/// ローカル実行とサーバー接続を同じ口 ([BotController]) で扱い、
-/// 画面はこのクラスだけを見る。
+/// ボットはサーバーで動かし、アプリはサーバーにつないで見る・操作するだけ。
+/// 残高・建玉・決済の記録もサーバーが取引所から取って返す (端末は取引所の
+/// 鍵を持たない)。画面はこのクラスだけを見る。
 class AppState extends ChangeNotifier {
   AppState(this._store, {TradeNotifier? notifier}) : _notifier = notifier;
 
@@ -33,18 +33,21 @@ class AppState extends ChangeNotifier {
 
   AppSettings _settings = const AppSettings();
   StrategyConfig _config = const StrategyConfig();
-  Credentials _credentials = const Credentials();
-  BotController? _controller;
+  RemoteBotController? _controller;
   BotSnapshot _snapshot = BotSnapshot.initial(const StrategyConfig());
   ControllerConnection _connection = ControllerConnection.disconnected;
   final List<BotEvent> _events = [];
   bool _initialized = false;
-  String? _notice;
+  bool _refreshingAccount = false;
 
   StreamSubscription<BotSnapshot>? _snapshotSub;
   StreamSubscription<BotEvent>? _eventSub;
   StreamSubscription<ControllerConnection>? _connectionSub;
-  Timer? _persistTimer;
+  Timer? _refreshTimer;
+
+  /// 止まっている間に、口座と建玉をサーバーに取り直してもらう間隔。
+  /// 動いている間はサーバーが判定のたびに取り直すので頼まない。
+  static const Duration accountRefreshInterval = Duration(seconds: 30);
 
   /// 銘柄一覧などからチャートを開く依頼。ホームとチャートが聞いている。
   final ValueNotifier<ChartRequest?> chartRequest = ValueNotifier(null);
@@ -62,103 +65,64 @@ class AppState extends ChangeNotifier {
   /// 購読を上書きして「つないだのに未接続のまま」になる。順番に流す。
   Future<void> _rebuildChain = Future<void>.value();
 
-  /// 残高だけを端末から直接取る口。ローカル実行で鍵があるときだけ持つ。
-  AccountDataSource? _account;
-  AccountAsset? _liveAsset;
-  DateTime? _assetFetchedAt;
-  String? _assetError;
-  bool _refreshingAsset = false;
-
-  /// 端末から取引所へ直接聞いた建玉と決済の記録。サーバーが返すのは
-  /// ボットが建てた建玉だけなので、手で建てたものはこちらで拾う。
-  List<PositionInfo> _exchangeOpen = const [];
-  List<PositionInfo>? _exchangeClosed;
-  Map<String, double> _lastPrices = const {};
-  Map<String, double> _contractSizes = const {};
-  String? _exchangeError;
-  bool _refreshingExchange = false;
-  Timer? _exchangeTimer;
-
-  /// 取引所の建玉を取り直す間隔。
-  static const Duration exchangeRefreshInterval = Duration(seconds: 30);
-
   static const int maxEvents = 500;
 
   AppSettings get settings => _settings;
   StrategyConfig get config => _config;
-  Credentials get credentials => _credentials;
   BotSnapshot get snapshot => _snapshot;
   ControllerConnection get connection => _connection;
   List<BotEvent> get events => List.unmodifiable(_events.reversed);
   bool get initialized => _initialized;
-  bool get isLocalMode => _settings.mode == RunMode.local;
   bool get isRunning => _snapshot.running;
-  String? get notice => _notice ?? _store.secureStorageError;
 
-  /// 画面に出す残高。端末で直接取ったものがあればそれを優先する。
-  AccountAsset? get displayAsset => _liveAsset ?? _snapshot.asset;
-  DateTime? get assetFetchedAt => _assetFetchedAt;
-  String? get assetError => _assetError;
-  bool get refreshingAsset => _refreshingAsset;
+  /// 画面に出す残高 (サーバーが取引所から取ったもの)。
+  AccountAsset? get displayAsset => _snapshot.asset;
+  bool get refreshingAsset => _refreshingAccount;
 
   /// ボットが管理していない、取引所にある建玉 (手で建てたものなど)。
-  List<PositionInfo> get foreignPositions =>
-      exchangeOnlyPositions(_snapshot.positions, _exchangeOpen);
+  List<PositionInfo> get foreignPositions => exchangeOnlyPositions(
+    _snapshot.positions,
+    _snapshot.exchangePositions ?? const [],
+  );
 
-  /// 取引所の決済の記録。端末から取れていなければ null。
-  List<PositionInfo>? get exchangeClosed => _exchangeClosed;
+  /// 取引所の決済の記録。サーバーがまだ返していなければ null。
+  List<PositionInfo>? get exchangeClosed => _snapshot.exchangeClosed;
 
-  /// 端末から取引所へ聞けなかった理由。
-  String? get exchangeError => _exchangeError;
+  /// 銘柄の現在値。
+  double? lastPriceOf(String symbol) => _snapshot.markPrices[symbol];
 
-  /// 銘柄の現在値。ボットのものが無ければ端末で取ったものを使う。
-  double? lastPriceOf(String symbol) =>
-      _snapshot.markPrices[symbol] ?? _lastPrices[symbol];
-
-  double contractSizeOf(String symbol) => _contractSizes[symbol] ?? 1;
+  /// 1 枚あたりの数量。評価損益の計算に使う。
+  double contractSizeOf(String symbol) => _snapshot.contractSizes[symbol] ?? 1;
 
   Future<void> initialize() async {
     _settings = await _store.loadAppSettings();
     _config = await _store.loadStrategyConfig();
-    _credentials = await _store.loadCredentials();
     _snapshot = BotSnapshot.initial(_config);
     _initialized = true;
     notifyListeners();
+    // 以前の版で端末に保存した取引所の鍵。いまは使わないので消しておく。
+    unawaited(_store.clearCredentials());
     await _notifier?.initialize();
 
     await _rebuildController();
 
-    if (isLocalMode && _settings.wasRunning) {
-      // 前回「停止」を押さずに終わった (閉じた・落ちた) ので、続きから動かす。
-      // サーバー接続では、サーバーが自分で動き続けている。
-      await start();
-    } else if (_credentials.apiKey.isNotEmpty) {
-      // 動かしていなくても、口座の中身は最初に一度見せる。
-      await refreshAccount();
-    }
-
-    // ローカル実行の建玉は端末に残しておく。
-    _persistTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      unawaited(_persistPositions());
+    _refreshTimer = Timer.periodic(accountRefreshInterval, (_) {
+      if (_connection == ControllerConnection.connected && !isRunning) {
+        unawaited(_controller?.refreshAccount());
+      }
     });
   }
 
-  /// サーバー接続で、いまつながらない理由。分かっていなければ null。
-  String? get connectionError {
-    final controller = _controller;
-    return controller is RemoteBotController ? controller.lastError : null;
-  }
+  /// サーバーに、いまつながらない理由。分かっていなければ null。
+  String? get connectionError => _controller?.lastError;
 
   /// 設定を直さないとつながらない状態か (トークン違いなど)。
-  bool get connectionNeedsFix {
-    final controller = _controller;
-    return controller is RemoteBotController && controller.needsSettingsFix;
-  }
+  bool get connectionNeedsFix => _controller?.needsSettingsFix ?? false;
 
   /// いまの設定でつなぎ直す。設定画面の「つなぎ直す」から呼ぶ。
   Future<void> reconnect() => _rebuildController();
 
-  /// 実行モードやAPIキーが変わったらコントローラを作り直す。
+  /// 接続先が変わったらコントローラを作り直す。
   ///
   /// 重ねて呼ばれても順番に 1 つずつ実行する。
   Future<void> _rebuildController() {
@@ -178,40 +142,29 @@ class AppState extends ChangeNotifier {
       await old.dispose();
     }
 
-    final BotController controller;
-    if (_settings.mode == RunMode.local) {
-      final local = LocalBotController(
-        config: _config,
-        apiKey: _credentials.apiKey.isEmpty ? null : _credentials.apiKey,
-        apiSecret: _credentials.apiSecret.isEmpty
-            ? null
-            : _credentials.apiSecret,
-      );
-      local.restorePositions(await _store.loadPositions());
-      controller = local;
-    } else {
-      controller = RemoteBotController(
-        serverUrl: _settings.serverUrl,
-        token: _settings.serverToken,
-        initialConfig: _config,
-      );
-    }
-
+    final controller = RemoteBotController(
+      serverUrl: _settings.serverUrl,
+      token: _settings.serverToken,
+      initialConfig: _config,
+    );
     _controller = controller;
-    _rebuildAccountSource();
     // 繋ぎ先が変わったので、建玉の覚えを取り直す (前からある分は知らせない)。
     _changes.reset();
     _snapshotSub = controller.snapshots.listen((s) {
       _snapshot = s;
       // サーバー側の設定を正とする。
-      if (!controller.isLocal) _config = s.config;
+      _config = s.config;
       _notifyTrades(s);
       notifyListeners();
     });
     _eventSub = controller.events.listen(_addEvent);
     _connectionSub = controller.connectionState.listen((c) {
+      final connectedNow =
+          c == ControllerConnection.connected && _connection != c;
       _connection = c;
       notifyListeners();
+      // つながったら、残高と建玉 (手で建てたものも) を取り直してもらう。
+      if (connectedNow) unawaited(controller.refreshAccount());
     });
 
     _snapshot = controller.snapshot;
@@ -242,119 +195,39 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// サーバーのボットを動かす。「停止」を押すまで、アプリを閉じても動き続ける。
   Future<void> start() async {
     await _controller?.start();
-    await _rememberRunning(true);
     notifyListeners();
   }
 
   Future<void> stop() async {
     await _controller?.stop();
-    await _rememberRunning(false);
     notifyListeners();
-  }
-
-  /// ローカル実行では「開始」から「停止」までを覚えておく。アプリを閉じたり
-  /// 落ちたりしても、次に開いたとき続きから動かすため。
-  /// サーバー接続ではサーバーが覚えているので、ここでは何もしない。
-  Future<void> _rememberRunning(bool running) async {
-    if (!isLocalMode || _settings.wasRunning == running) return;
-    _settings = _settings.copyWith(wasRunning: running);
-    await _store.saveAppSettings(_settings);
   }
 
   Future<void> closePosition(String id) async {
     await _controller?.closePosition(id);
   }
 
-  /// 口座と建玉を取り直す。止まっていても使える。
-  ///
-  /// ローカル実行なら残高は端末が直接取る (待ち行列が別なので速い)。
-  /// 建玉の突き合わせは裏でエンジンに頼む。サーバー接続では鍵が端末に
-  /// 無いので、サーバーに頼むしかない。
+  /// 残高・建玉・決済の記録を、サーバーに取引所から取り直してもらう。
+  /// 止まっていても使える。
   Future<void> refreshAccount() async {
-    final account = _account;
-    if (account == null) {
-      await _controller?.refreshAccount();
-      return;
-    }
-    if (_refreshingAsset) return;
-    _refreshingAsset = true;
-    _assetError = null;
+    final controller = _controller;
+    if (controller == null || _refreshingAccount) return;
+    _refreshingAccount = true;
     notifyListeners();
     try {
-      _liveAsset = await account.fetchUsdt();
-      _assetFetchedAt = DateTime.now();
-    } catch (e) {
-      _assetError = '$e';
+      await controller.refreshAccount();
     } finally {
-      _refreshingAsset = false;
+      _refreshingAccount = false;
       notifyListeners();
-    }
-    final controller = _controller;
-    if (controller != null) unawaited(controller.refreshAccount());
-    unawaited(refreshExchange());
-  }
-
-  /// 取引所の建玉と決済の記録を、端末から直接取り直す。
-  Future<void> refreshExchange() async {
-    final account = _account;
-    if (account == null || _refreshingExchange) return;
-    _refreshingExchange = true;
-    try {
-      // 順に聞く (並べて聞くと、1 つが失敗したときに残りの失敗を拾い損ねる)。
-      final results = (
-        await account.fetchOpenPositions(),
-        await account.fetchClosedPositions(),
-        await account.fetchLastPrices(),
-        await account.contractSizes(),
-      );
-      // 待っている間に鍵が変わっていたら、古い結果は捨てる。
-      if (!identical(account, _account)) return;
-      _exchangeOpen = results.$1;
-      _exchangeClosed = results.$2;
-      _lastPrices = results.$3;
-      _contractSizes = results.$4;
-      _exchangeError = null;
-    } catch (e) {
-      if (!identical(account, _account)) return;
-      _exchangeError = '$e';
-    } finally {
-      _refreshingExchange = false;
-      notifyListeners();
-    }
-  }
-
-  /// 残高を直接取る口を、いまの動かし方と鍵に合わせて作り直す。
-  void _rebuildAccountSource() {
-    _account?.dispose();
-    _account = null;
-    _liveAsset = null;
-    _assetFetchedAt = null;
-    _assetError = null;
-    _exchangeOpen = const [];
-    _exchangeClosed = null;
-    _exchangeError = null;
-    _exchangeTimer?.cancel();
-    _exchangeTimer = null;
-    // サーバー接続でも、端末に鍵があれば残高・建玉・決済の記録は直接取る
-    // (そのほうが速く、手で建てた建玉も見える)。
-    if (!_credentials.isEmpty) {
-      _account = AccountDataSource(
-        apiKey: _credentials.apiKey,
-        apiSecret: _credentials.apiSecret,
-      );
-      unawaited(refreshExchange());
-      _exchangeTimer = Timer.periodic(exchangeRefreshInterval, (_) {
-        unawaited(refreshExchange());
-      });
     }
   }
 
   /// 決済済みの記録を消す。[id] が null なら全部。
   Future<void> clearHistory({String? id}) async {
     await _controller?.clearHistory(id: id);
-    await _persistPositions();
   }
 
   /// 建玉の利確 / 損切りラインを置き直す。
@@ -380,69 +253,18 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> updateAppSettings(AppSettings settings) async {
-    final modeChanged = settings.mode != _settings.mode;
-    // 動かし方を変えるとローカルのボットは止まるので、続きから動かす印も消す。
-    if (modeChanged) settings = settings.copyWith(wasRunning: false);
     final connectionChanged =
         settings.serverUrl != _settings.serverUrl ||
         settings.serverToken != _settings.serverToken;
     _settings = settings;
     await _store.saveAppSettings(settings);
     notifyListeners();
-    if (modeChanged || (settings.mode == RunMode.remote && connectionChanged)) {
-      await _rebuildController();
-    }
+    if (connectionChanged) await _rebuildController();
   }
 
-  Future<void> updateCredentials(Credentials credentials) async {
-    _credentials = credentials;
-    final ok = await _store.saveCredentials(credentials);
-    if (!ok) {
-      _notice = _store.secureStorageError;
-    }
-    notifyListeners();
-    // ローカル実行では APIキーをエンジンに渡し直す必要がある。
-    // サーバー接続では、残高を直接取る口だけ作り直す。
-    if (_settings.mode == RunMode.local) {
-      await _rebuildController();
-    } else {
-      _rebuildAccountSource();
-      notifyListeners();
-    }
-    // キーを入れたら、止まっていてもすぐ残高を見に行く。
-    if (credentials.apiKey.isNotEmpty && credentials.apiSecret.isNotEmpty) {
-      await refreshAccount();
-    }
-  }
-
-  Future<void> clearCredentials() async {
-    await _store.clearCredentials();
-    _credentials = const Credentials();
-    notifyListeners();
-    if (_settings.mode == RunMode.local) {
-      await _rebuildController();
-    } else {
-      _rebuildAccountSource();
-      notifyListeners();
-    }
-  }
-
-  void dismissNotice() {
-    _notice = null;
-    notifyListeners();
-  }
-
-  Future<void> _persistPositions() async {
-    final controller = _controller;
-    if (controller is! LocalBotController) return;
-    await _store.savePositions(controller.engine.allPositions);
-  }
-
-  /// アプリを終わらせる前の後片付け。建玉を保存し、接続を閉じる。
+  /// アプリを終わらせる前の後片付け。接続を閉じる (ボットはサーバーで動き続ける)。
   Future<void> shutdown() async {
-    _persistTimer?.cancel();
-    _exchangeTimer?.cancel();
-    await _persistPositions();
+    _refreshTimer?.cancel();
     await _snapshotSub?.cancel();
     await _eventSub?.cancel();
     await _connectionSub?.cancel();
@@ -453,10 +275,7 @@ class AppState extends ChangeNotifier {
   @override
   Future<void> dispose() async {
     chartRequest.dispose();
-    _account?.dispose();
-    _persistTimer?.cancel();
-    _exchangeTimer?.cancel();
-    await _persistPositions();
+    _refreshTimer?.cancel();
     await _snapshotSub?.cancel();
     await _eventSub?.cancel();
     await _connectionSub?.cancel();

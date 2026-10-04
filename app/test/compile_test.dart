@@ -5,6 +5,7 @@
 // 1 本置いて `flutter test` でまとめてコンパイルさせている。
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mexc_bot_app/main.dart' as entry;
 import 'package:mexc_bot_app/src/app.dart';
 import 'package:mexc_bot_app/src/ui/chart_page.dart';
 import 'package:mexc_bot_app/src/ui/dashboard_page.dart';
@@ -35,6 +36,7 @@ void main() {
   });
 
   test('MexcBotApp の型が揃っている', () {
+    expect(entry.main, isA<Function>());
     expect(AppScope.of, isA<Function>());
     expect(MexcBotApp, isNotNull);
   });

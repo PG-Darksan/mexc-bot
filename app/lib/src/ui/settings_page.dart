@@ -8,7 +8,6 @@ import '../app.dart';
 import '../settings/app_settings.dart';
 import '../settings/settings_store.dart';
 import '../state/app_state.dart';
-import 'home_page.dart' show RunModeLabel;
 
 /// 売買条件と接続設定をまとめて編集する画面。
 ///
@@ -25,9 +24,6 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   StrategyConfig? _draft;
-  AppSettings? _appDraft;
-  final _apiKeyController = TextEditingController();
-  final _apiSecretController = TextEditingController();
   final _serverUrlController = TextEditingController();
   final _serverTokenController = TextEditingController();
   bool _loadedOnce = false;
@@ -48,9 +44,6 @@ class _SettingsPageState extends State<SettingsPage> {
     final state = AppScope.of(context);
     setState(() {
       _draft = state.config;
-      _appDraft = state.settings;
-      _apiKeyController.text = state.credentials.apiKey;
-      _apiSecretController.text = state.credentials.apiSecret;
       _serverUrlController.text = state.settings.serverUrl;
       _serverTokenController.text = state.settings.serverToken;
       _checkResult = null;
@@ -59,15 +52,12 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   void dispose() {
-    _apiKeyController.dispose();
-    _apiSecretController.dispose();
     _serverUrlController.dispose();
     _serverTokenController.dispose();
     super.dispose();
   }
 
   StrategyConfig get draft => _draft!;
-  AppSettings get appDraft => _appDraft!;
 
   void _update(StrategyConfig Function(StrategyConfig) change) =>
       setState(() => _draft = change(draft));
@@ -80,31 +70,19 @@ class _SettingsPageState extends State<SettingsPage> {
 
   /// 保存する画面設定を組む。
   ///
-  /// この画面で変えるのは動かし方・URL・トークンだけ (URL とトークンは
-  /// 入力欄から取る)。ほかの値 (明るさ・ボットを動かしたまま終わったか) は
-  /// ほかの所で変わるので、この画面の写し (開いたときのまま) ではなく、
-  /// いまの値を引き継ぐ。写しのまま書き戻すと、動かし方を触ったとたんに
-  /// 明るさなどが元に戻ってしまう。
-  AppSettings _settingsToSave(AppState state, AppSettings next) =>
-      state.settings.copyWith(
-        mode: next.mode,
-        serverUrl: _serverUrlController.text.trim(),
-        serverToken: _serverTokenController.text.trim(),
-      );
+  /// この画面で変えるのは URL とトークンだけ (入力欄から取る)。ほかの値
+  /// (明るさ・チャートの線) はほかの所で変わるので、この画面の写し
+  /// (開いたときのまま) ではなく、いまの値を引き継ぐ。写しのまま書き戻すと、
+  /// 保存したとたんに明るさなどが元に戻ってしまう。
+  AppSettings _settingsToSave(AppState state) => state.settings.copyWith(
+    serverUrl: _serverUrlController.text.trim(),
+    serverToken: _serverTokenController.text.trim(),
+  );
 
-  /// 動かし方まわりは、切り替えたその場で覚える。
-  ///
-  /// タブを移ると画面が作り直されるので、保存しないと元に戻ってしまう。
-  Future<void> _persistAppSettings(AppSettings next) async {
+  Future<void> _persistAppSettings() async {
     if (!mounted) return;
     final state = AppScope.of(context);
-    await state.updateAppSettings(_settingsToSave(state, next));
-  }
-
-  void _changeAppSettings(AppSettings Function(AppSettings) change) {
-    final next = change(appDraft);
-    setState(() => _appDraft = next);
-    unawaited(_persistAppSettings(next));
+    await state.updateAppSettings(_settingsToSave(state));
   }
 
   /// URL とトークンを保存して、つなぎ直す。
@@ -114,7 +92,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _applyConnection() async {
     final state = AppScope.of(context);
     setState(() => _checkResult = null);
-    await _persistAppSettings(appDraft);
+    await _persistAppSettings();
     await state.reconnect();
     if (!mounted) return;
     ScaffoldMessenger.of(
@@ -155,16 +133,7 @@ class _SettingsPageState extends State<SettingsPage> {
     }
 
     await state.updateStrategyConfig(config);
-    await state.updateAppSettings(_settingsToSave(state, appDraft));
-    if (_apiKeyController.text.trim() != state.credentials.apiKey ||
-        _apiSecretController.text.trim() != state.credentials.apiSecret) {
-      await state.updateCredentials(
-        Credentials(
-          apiKey: _apiKeyController.text.trim(),
-          apiSecret: _apiSecretController.text.trim(),
-        ),
-      );
-    }
+    await state.updateAppSettings(_settingsToSave(state));
     if (!mounted) return;
     ScaffoldMessenger.of(
       context,
@@ -189,7 +158,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (_draft == null || _appDraft == null) {
+    if (_draft == null) {
       return const Center(child: CircularProgressIndicator());
     }
     final state = AppScope.of(context);
@@ -528,26 +497,9 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
 
                   _Group(
-                    title: '動かし方',
-                    description: 'ここは切り替えるとすぐ保存されます。',
+                    title: 'サーバーへの接続',
+                    description: 'ボットはサーバーで動きます。アプリはつないで見る・操作するだけです。',
                     children: [
-                      for (final mode in RunMode.values)
-                        RadioListTile<RunMode>(
-                          value: mode,
-                          groupValue: appDraft.mode,
-                          onChanged: (v) {
-                            if (v == null) return;
-                            _changeAppSettings((s) => s.copyWith(mode: v));
-                          },
-                          title: Text(
-                            mode.label,
-                            style: const TextStyle(fontSize: 13),
-                          ),
-                          contentPadding: EdgeInsets.zero,
-                          visualDensity: VisualDensity.compact,
-                          dense: true,
-                        ),
-                      if (appDraft.mode == RunMode.remote) ...[
                         const SizedBox(height: 8),
                         TextField(
                           controller: _serverUrlController,
@@ -619,61 +571,17 @@ class _SettingsPageState extends State<SettingsPage> {
                           'BOT_TOKEN と同じ値です (サーバーの /etc/mexc-bot/env に'
                           '入っています)。前後の空白や改行は取り除いて送ります。\n'
                           'URL とトークンは入れ終わってから「保存してつなぎ直す」を'
-                          '押してください。サーバーをまだ立てていないなら、'
-                          'ローカル実行のままにしてください。',
+                          '押してください。',
                         ),
-                      ],
                       const _Hint(
-                        '「開始」を押すと、「停止」を押すまで動き続けます。'
-                        'サーバー接続では、アプリを閉じても落ちてもサーバーで'
-                        '動き続けます。ローカル実行では、アプリが終わると止まり'
-                        'ますが (Windows はウィンドウを閉じてもトレイで動き'
-                        '続けます)、次に開いたとき続きから動きます。',
+                        '「開始」を押すと、「停止」を押すまでサーバーで動き続けます '
+                        '(アプリを閉じても落ちても止まりません)。'
+                        '取引所の API キーはサーバーの /etc/mexc-bot/env に入れます。'
+                        '残高・建玉・決済の記録も、サーバーが取引所から取って返します。',
                       ),
                     ],
                   ),
 
-                  _Group(
-                    title: '取引所のAPIキー',
-                    description: state.credentials.isEmpty ? '未設定' : '設定済み',
-                    children: [
-                      TextField(
-                        controller: _apiKeyController,
-                        decoration: const InputDecoration(
-                          labelText: 'API Key',
-                          isDense: true,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: _apiSecretController,
-                        obscureText: true,
-                        decoration: const InputDecoration(
-                          labelText: 'API Secret',
-                          isDense: true,
-                        ),
-                      ),
-                      const _Hint(
-                        'IPホワイトリストを設定しないキーは90日で失効します。'
-                        '先物の発注権限とKYCが必要です。\n'
-                        'サーバー接続のときも、ここに入れた鍵で残高だけは端末が'
-                        '直接取ります (サーバーを経由するより速い)。'
-                        '注文はサーバー側の鍵で出します。',
-                      ),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton.icon(
-                          onPressed: () async {
-                            await state.clearCredentials();
-                            _apiKeyController.clear();
-                            _apiSecretController.clear();
-                          },
-                          icon: const Icon(Icons.delete_outline, size: 16),
-                          label: const Text('保存したキーを消す'),
-                        ),
-                      ),
-                    ],
-                  ),
                 ],
               ),
 

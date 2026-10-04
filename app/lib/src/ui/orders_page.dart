@@ -7,8 +7,8 @@ import 'log_page.dart';
 
 /// 注文と記録をまとめて見る画面。
 ///
-/// 保有中・決済済み・ログの3つを切り替える。建玉と決済の記録は、端末に
-/// 鍵があれば取引所から直接取ったものも出す (手で建てた建玉も見えるように)。
+/// 保有中・決済済み・ログの3つを切り替える。建玉と決済の記録は、サーバーが
+/// 取引所から取ったものも出す (手で建てた建玉も見えるように)。
 class OrdersPage extends StatelessWidget {
   const OrdersPage({super.key});
 
@@ -58,38 +58,6 @@ class OrdersPage extends StatelessWidget {
   }
 }
 
-/// 端末から取引所へ聞けなかったときの知らせ。
-class _ExchangeError extends StatelessWidget {
-  const _ExchangeError(this.error);
-
-  final String error;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final ipBlocked = error.contains('whitelist') || error.contains('406');
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.errorContainer,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        ipBlocked
-            ? '取引所から直接取れませんでした。この端末に入れた API キーは IP 制限が'
-                  '付いていて、この端末の IP が許可されていません。手で建てた建玉も'
-                  '出すには、設定タブに IP 制限の無い閲覧用のキーを入れてください。'
-                  'いまはボットが建てた建玉だけを出しています。'
-            : '取引所から直接取れませんでした ($error)。'
-                  'いまはボットが建てた建玉だけを出しています。',
-        style: TextStyle(fontSize: 12, color: theme.colorScheme.onErrorContainer),
-      ),
-    );
-  }
-}
-
 class _OpenOrders extends StatelessWidget {
   const _OpenOrders({
     required this.positions,
@@ -106,12 +74,10 @@ class _OpenOrders extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
-    final error = state.exchangeError;
     final total = positions.length + foreign.length;
 
     return Column(
       children: [
-        if (error != null) _ExchangeError(error),
         Expanded(
           child: total == 0
               ? const Center(child: Text('保有中のポジションはありません'))
@@ -207,11 +173,9 @@ class _ClosedOrdersState extends State<_ClosedOrders> {
   Widget build(BuildContext context) {
     final exchange = widget.exchange;
     final showExchange = exchange != null && _showExchange;
-    final state = AppScope.of(context);
 
     return Column(
       children: [
-        if (state.exchangeError != null) _ExchangeError(state.exchangeError!),
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
           child: Row(

@@ -43,16 +43,6 @@ void main() {
 
       expect(state.settings.themeMode, AppThemeMode.dark);
     });
-
-    testWidgets('「開始」を押して動かしている印', (tester) async {
-      final state = await _pumpSettings(tester);
-      await state.start();
-      await tester.pump();
-
-      await _save(tester);
-
-      expect(state.settings.wasRunning, isTrue);
-    });
   });
 
   testWidgets('飛び出しで入る条件は、σ のバンドから何 % 外かで書く', (tester) async {

@@ -28,42 +28,23 @@ class MexcBotApp extends StatefulWidget {
 
 class _MexcBotAppState extends State<MexcBotApp> {
   final TrayService _tray = TrayService();
-  bool _trayReady = false;
-  bool? _lastKeepInTray;
 
   @override
   void initState() {
     super.initState();
-    widget.state.addListener(_onStateChanged);
-    _onStateChanged();
-  }
-
-  void _onStateChanged() {
-    // ローカル実行ではボットがアプリの中で動いているので、閉じてもトレイに
-    // 残して動かし続ける。サーバー接続ではボットはサーバーで動いているので、
-    // 閉じたらそのまま終わってよい。
-    final keep = widget.state.isLocalMode;
-    if (!_trayReady) {
-      _trayReady = true;
-      _lastKeepInTray = keep;
-      _tray.initialize(
-        keepInTray: keep,
-        onBeforeExit: () async {
-          // トレイから終了するときは、建玉を保存してからプロセスを落とす。
-          await widget.state.shutdown();
-        },
-      );
-      return;
-    }
-    if (_lastKeepInTray != keep) {
-      _lastKeepInTray = keep;
-      _tray.setKeepInTray(keep);
-    }
+    // ボットはサーバーで動いているので、ウィンドウを閉じたらアプリは
+    // そのまま終わってよい (トレイに残して動かし続ける必要が無い)。
+    _tray.initialize(
+      keepInTray: false,
+      onBeforeExit: () async {
+        // トレイから終了するときは、接続を閉じてからプロセスを落とす。
+        await widget.state.shutdown();
+      },
+    );
   }
 
   @override
   void dispose() {
-    widget.state.removeListener(_onStateChanged);
     _tray.dispose();
     super.dispose();
   }
