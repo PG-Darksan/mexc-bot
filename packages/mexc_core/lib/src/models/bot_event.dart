@@ -92,6 +92,9 @@ class BotSnapshot {
     this.asset,
     this.lastError,
     this.credentialsConfigured = false,
+    this.exchangePositions,
+    this.exchangeClosed,
+    this.contractSizes = const {},
   });
 
   final bool running;
@@ -116,6 +119,16 @@ class BotSnapshot {
   final AccountAsset? asset;
   final String? lastError;
   final bool credentialsConfigured;
+
+  /// 取引所にある建玉。ボットが建てたものも、手で建てたものも入る。
+  /// まだ取っていなければ (古いサーバーなど) null。
+  final List<PositionInfo>? exchangePositions;
+
+  /// 取引所の決済の記録 (新しい順)。まだ取っていなければ null。
+  final List<PositionInfo>? exchangeClosed;
+
+  /// [exchangePositions] の銘柄の 1 枚あたりの数量。評価損益の計算に使う。
+  final Map<String, double> contractSizes;
 
   static BotSnapshot initial(StrategyConfig config) => BotSnapshot(
     running: false,
@@ -144,6 +157,9 @@ class BotSnapshot {
     'asset': asset?.toJson(),
     'lastError': lastError,
     'credentialsConfigured': credentialsConfigured,
+    'exchangePositions': exchangePositions?.map((e) => e.toJson()).toList(),
+    'exchangeClosed': exchangeClosed?.map((e) => e.toJson()).toList(),
+    'contractSizes': contractSizes,
   };
 
   factory BotSnapshot.fromJson(Map<String, dynamic> json) => BotSnapshot(
@@ -183,5 +199,14 @@ class BotSnapshot {
         : AccountAsset.fromJson((json['asset'] as Map).cast<String, dynamic>()),
     lastError: json['lastError'] as String?,
     credentialsConfigured: json['credentialsConfigured'] as bool? ?? false,
+    exchangePositions: _positionList(json['exchangePositions']),
+    exchangeClosed: _positionList(json['exchangeClosed']),
+    contractSizes: ((json['contractSizes'] as Map?) ?? const {}).map(
+      (k, v) => MapEntry('$k', (v as num).toDouble()),
+    ),
   );
+
+  static List<PositionInfo>? _positionList(Object? raw) => raw is List
+      ? raw.cast<Map<String, dynamic>>().map(PositionInfo.fromJson).toList()
+      : null;
 }

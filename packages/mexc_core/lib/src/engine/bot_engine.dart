@@ -80,6 +80,17 @@ class BotEngine {
   /// ([exchangeSyncGrace]) の間は保有中とみなし、重ねて出さない。
   final Map<String, DateTime> _unsureOrders = {};
 
+  /// 取引所にある建玉 (手で建てたものも) と、決済の記録。画面に出すために持つ。
+  List<PositionInfo>? _exchangeOpen;
+  List<PositionInfo>? _exchangeClosed;
+  DateTime _lastHistoryFetch = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// 決済の記録を取り直す間隔。建玉が減ったとき (決済されたとき) はすぐ取る。
+  static const Duration historyRefreshInterval = Duration(minutes: 5);
+
+  /// 画面に返す決済の記録の件数。
+  static const int maxExchangeClosedInSnapshot = 50;
+
   /// 管理外の建玉について、すでに知らせた銘柄。同じ警告を毎分出さないため。
   final Set<String> _warnedForeignSymbols = {};
 
@@ -117,15 +128,27 @@ class BotEngine {
     closedPositions: _closedPositions.reversed.take(100).toList(),
     pendingHistoryCount: _feed.missingSeriesCount,
     markPrices: {
-      for (final p in _positions.values)
-        if (_feed.tickerOf(p.symbol) != null)
-          p.symbol: _feed.tickerOf(p.symbol)!.lastPrice,
+      for (final symbol in {
+        for (final p in _positions.values) p.symbol,
+        for (final p in _exchangeOpen ?? const <PositionInfo>[]) p.symbol,
+      })
+        if (_feed.tickerOf(symbol) != null)
+          symbol: _feed.tickerOf(symbol)!.lastPrice,
     },
     lastCycleAt: _lastCycleAt,
     lastCycleDurationMs: _lastCycleDurationMs,
     asset: _asset,
     lastError: _lastError,
     credentialsConfigured: _rest.hasCredentials,
+    exchangePositions: _exchangeOpen,
+    exchangeClosed: _exchangeClosed
+        ?.take(maxExchangeClosedInSnapshot)
+        .toList(growable: false),
+    contractSizes: {
+      for (final p in _exchangeOpen ?? const <PositionInfo>[])
+        if (_feed.contractOf(p.symbol) != null)
+          p.symbol: _feed.contractOf(p.symbol)!.contractSize,
+    },
   );
 
   // ── 起動 / 停止 ─────────────────────────────────────────────
@@ -556,7 +579,7 @@ class BotEngine {
   /// 利確は発注時に取引所へ預けてあるので、決済されると建玉一覧から消える。
   /// 通信に失敗したときは保有銘柄の記録をそのまま残す (取りこぼして
   /// 同じ銘柄に重ねて注文を出すより、1 サイクル見送るほうが安全)。
-  Future<void> _syncExchangeState() async {
+  Future<void> _syncExchangeState({bool includeHistory = false}) async {
     if (!_rest.hasCredentials) return;
     try {
       final assets = await _rest.fetchAssets();
@@ -568,6 +591,15 @@ class BotEngine {
           .where((p) => p.isOpen && p.holdVol > 0)
           .toList();
       final openSymbols = open.map((p) => p.symbol).toSet();
+      // 建玉が減ったら決済されたので、決済の記録もすぐ取り直す。
+      final closedSome = (_exchangeOpen?.length ?? 0) > open.length;
+      _exchangeOpen = open;
+      if (includeHistory ||
+          closedSome ||
+          DateTime.now().difference(_lastHistoryFetch) >
+              historyRefreshInterval) {
+        await _refreshExchangeHistory();
+      }
 
       // 発注直後でまだ一覧に載っていない建玉も、保有中として扱い続ける。
       final pending = _positions.values
@@ -663,6 +695,19 @@ class BotEngine {
     }
   }
 
+  /// 取引所の決済の記録を取り直す。取れなくても売買には関わらないので、
+  /// 知らせるだけにする。
+  Future<void> _refreshExchangeHistory() async {
+    _lastHistoryFetch = DateTime.now();
+    try {
+      _exchangeClosed = await _rest.fetchHistoryPositions(
+        pageSize: maxExchangeClosedInSnapshot,
+      );
+    } catch (e) {
+      _log(BotEvent.warning('決済の記録を取れませんでした: $e'));
+    }
+  }
+
   /// 枚数が変わった建玉に、利確 (と損切り) を全枚数ぶんで置き直す。
   Future<void> _replaceTakeProfitFor(ManagedPosition position) async {
     final positionId = position.exchangePositionId;
@@ -717,7 +762,17 @@ class BotEngine {
       _emitSnapshot();
       return;
     }
-    await _syncExchangeState();
+    // 止まっている間は相場を取っていないので、評価損益に使う現在値と
+    // 1 枚あたりの数量をここで取り直す。
+    if (!_running) {
+      try {
+        if (_feed.contracts.isEmpty) await _feed.refreshContracts();
+        await _feed.refreshTickers();
+      } catch (e) {
+        _log(BotEvent.warning('現在値を取り直せませんでした: $e'));
+      }
+    }
+    await _syncExchangeState(includeHistory: true);
     _emitSnapshot();
   }
 
