@@ -11,10 +11,9 @@ import '../state/app_state.dart';
 
 /// 売買条件と接続設定をまとめて編集する画面。
 ///
-/// 項目ごとに枠を分けず、1 つの枠の中に見出しで区切って並べる
-/// (開け閉めしなくても全部見えるように)。
-/// ショートとロングは同じ並びで左右に置き、値を見比べられるようにする。
-/// 出来高の下限・時間軸・指標の期間も方向ごとなので、いちばん上にある。
+/// 項目ごとに枠を分けず、1 つの枠の中に見出しで区切って並べる。
+/// 向きで分けるのは建てるか・出来高の下限・RSI の閾値だけで、他の項目は
+/// ショートとロングに同じ値を入れる。指標の期間は BB20・RSI7・EMA5 で固定。
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
 
@@ -43,7 +42,7 @@ class _SettingsPageState extends State<SettingsPage> {
   void _reload() {
     final state = AppScope.of(context);
     setState(() {
-      _draft = state.config;
+      _draft = _normalize(state.config);
       _serverUrlController.text = state.settings.serverUrl;
       _serverTokenController.text = state.settings.serverToken;
       _checkResult = null;
@@ -67,6 +66,42 @@ class _SettingsPageState extends State<SettingsPage> {
 
   void _updateLong(SideConfig Function(SideConfig) change) =>
       _update((c) => c.withSide(change(c.long)));
+
+  /// ショートとロングで同じ値を使う項目を、両方に入れる。
+  void _updateBoth(SideConfig Function(SideConfig) change) =>
+      _update((c) => c.withSide(change(c.short)).withSide(change(c.long)));
+
+  /// 画面で扱える形に揃える。
+  ///
+  /// 向きで分けない項目は代表の向きの値を両方に入れ、指標の期間は固定値に
+  /// する。使わない 1 分足と 8 時間足は外す。
+  static StrategyConfig _normalize(StrategyConfig c) {
+    const fixed = SideConfig.short();
+    final from = c.primarySide;
+    SideConfig shared(SideConfig x) => x.copyWith(
+      timeframes: [
+        for (final t in from.timeframes)
+          if (timeframeChoices.contains(t)) t,
+      ],
+      bbPeriod: fixed.bbPeriod,
+      rsiPeriod: fixed.rsiPeriod,
+      emaPeriod: fixed.emaPeriod,
+      historyBars: from.historyBars,
+      bbSigma: from.bbSigma,
+      leverage: from.leverage,
+      marginPerTradeUsdt: from.marginPerTradeUsdt,
+      takeProfitFactor: from.takeProfitFactor,
+      minTakeProfitPercent: from.minTakeProfitPercent,
+      bandBreakoutEntryEnabled: from.bandBreakoutEntryEnabled,
+      bandBreakoutPercent: from.bandBreakoutPercent,
+      maxFundingBurdenPercent: from.maxFundingBurdenPercent,
+      minFundingIntervalHours: from.minFundingIntervalHours,
+      addOnEnabled: from.addOnEnabled,
+      addOnLossPercent: from.addOnLossPercent,
+      addOnBudgetPercent: from.addOnBudgetPercent,
+    );
+    return c.withSide(shared(c.short)).withSide(shared(c.long));
+  }
 
   /// 保存する画面設定を組む。
   ///
@@ -140,20 +175,15 @@ class _SettingsPageState extends State<SettingsPage> {
     ).showSnackBar(const SnackBar(content: Text('設定を保存しました')));
   }
 
-  /// 飛び出しで入る条件を、いまの値で言葉にする。入れている向きだけ出す。
+  /// 飛び出しで入る条件を、今の値で言葉にする。
   String _breakoutHint() {
-    final parts = [
-      if (draft.short.bandBreakoutEntryEnabled)
-        'ショートは +${_trimNumber(draft.short.bbSigma)}σ のバンドより '
-            '${_trimNumber(draft.short.bandBreakoutPercent)}% 以上高く',
-      if (draft.long.bandBreakoutEntryEnabled)
-        'ロングは -${_trimNumber(draft.long.bbSigma)}σ のバンドより '
-            '${_trimNumber(draft.long.bandBreakoutPercent)}% 以上安く',
-    ];
-    return 'いまの値: ${parts.join('、')}なったら入ります '
-        '(% はバンドの価格に対する割合)。\n'
-        'このときの利確は、バンドまでの距離に「利確の係数」を掛けた分だけ'
-        '戻った所です (0.5 なら半分戻った所)。';
+    final shared = draft.primarySide;
+    final sigma = _trimNumber(shared.bbSigma);
+    final percent = _trimNumber(shared.bandBreakoutPercent);
+    return '今の値: ショートは +$sigmaσ のバンドより $percent% 以上高く、'
+        'ロングは -$sigmaσ のバンドより $percent% 以上安くなったら入ります '
+        '(% はバンドの価格に対する割合)。'
+        'この時の利確は、バンドまでの距離に「利確の係数」を掛けた分だけ戻った所です。';
   }
 
   @override
@@ -162,6 +192,9 @@ class _SettingsPageState extends State<SettingsPage> {
       return const Center(child: CircularProgressIndicator());
     }
     final state = AppScope.of(context);
+    // 向きで分けない項目の値 (両方に同じ値が入っている)。
+    final shared = draft.primarySide;
+    final pushTopic = state.snapshot.pushTopic;
 
     return Column(
       children: [
@@ -175,8 +208,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   _Group(
                     title: 'ショートとロングの条件',
                     description:
-                        '出来高・時間軸・指標の期間も向きごとに決められます。'
-                        'RSI のしきい値だけ向きが逆 (既定 97 / 3) です。',
+                        '向きで分けるのは、建てるか・出来高の下限・RSI の閾値だけです。'
+                        '他は両方に同じ値を使います。',
                     children: [
                       _PairSwitch(
                         title: 'この向きで建てる',
@@ -188,7 +221,7 @@ class _SettingsPageState extends State<SettingsPage> {
                             _updateLong((x) => x.copyWith(enabled: v)),
                       ),
                       _PairField(
-                        title: '監視する銘柄: 24h出来高の下限',
+                        title: '監視する銘柄: 24 時間出来高の下限',
                         shortSuffix: 'M USDT',
                         longSuffix: 'M USDT',
                         shortValue: draft.short.minAmount24Usdt / 1000000,
@@ -201,72 +234,11 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                       ),
                       const _Hint(
-                        '1 M = 100万 USDT。既定 5 M。\n'
-                        '見る銘柄はこの下限だけで決まります。銘柄数に上限は無く、'
-                        '手で選んだり外したりもしません。'
-                        'ショートとロングで違う値にすると、それぞれの下限で絞られます。',
-                      ),
-                      _PairTimeframes(
-                        shortValue: draft.short.timeframes,
-                        longValue: draft.long.timeframes,
-                        onShortChanged: (v) =>
-                            _updateShort((x) => x.copyWith(timeframes: v)),
-                        onLongChanged: (v) =>
-                            _updateLong((x) => x.copyWith(timeframes: v)),
-                      ),
-                      const _Hint('選んだ時間軸それぞれで独立に判定します。'),
-                      _PairField(
-                        title: 'BB期間',
-                        integer: true,
-                        shortValue: draft.short.bbPeriod.toDouble(),
-                        longValue: draft.long.bbPeriod.toDouble(),
-                        onShortChanged: (v) => _updateShort(
-                          (x) => x.copyWith(bbPeriod: v.toInt()),
-                        ),
-                        onLongChanged: (v) =>
-                            _updateLong((x) => x.copyWith(bbPeriod: v.toInt())),
+                        '1 M = 100 万 USDT。監視するのは、両方の下限の低い方以上の'
+                        '全銘柄です。建てるかは向きごとの下限で決めます。',
                       ),
                       _PairField(
-                        title: 'RSI期間',
-                        integer: true,
-                        shortValue: draft.short.rsiPeriod.toDouble(),
-                        longValue: draft.long.rsiPeriod.toDouble(),
-                        onShortChanged: (v) => _updateShort(
-                          (x) => x.copyWith(rsiPeriod: v.toInt()),
-                        ),
-                        onLongChanged: (v) => _updateLong(
-                          (x) => x.copyWith(rsiPeriod: v.toInt()),
-                        ),
-                      ),
-                      _PairField(
-                        title: 'EMA期間 (利確の基準)',
-                        integer: true,
-                        shortValue: draft.short.emaPeriod.toDouble(),
-                        longValue: draft.long.emaPeriod.toDouble(),
-                        onShortChanged: (v) => _updateShort(
-                          (x) => x.copyWith(emaPeriod: v.toInt()),
-                        ),
-                        onLongChanged: (v) => _updateLong(
-                          (x) => x.copyWith(emaPeriod: v.toInt()),
-                        ),
-                      ),
-                      _PairField(
-                        title: '保持する足',
-                        integer: true,
-                        shortSuffix: '本',
-                        longSuffix: '本',
-                        shortValue: draft.short.historyBars.toDouble(),
-                        longValue: draft.long.historyBars.toDouble(),
-                        onShortChanged: (v) => _updateShort(
-                          (x) => x.copyWith(historyBars: v.toInt()),
-                        ),
-                        onLongChanged: (v) => _updateLong(
-                          (x) => x.copyWith(historyBars: v.toInt()),
-                        ),
-                      ),
-                      const _Hint('RSI は Wilder 平滑 (TradingView と同じ計算) です。'),
-                      _PairField(
-                        title: 'RSIのしきい値',
+                        title: 'RSI(7) の閾値',
                         shortSuffix: '以上',
                         longSuffix: '以下',
                         shortValue: draft.short.rsiThreshold,
@@ -276,167 +248,129 @@ class _SettingsPageState extends State<SettingsPage> {
                         onLongChanged: (v) =>
                             _updateLong((x) => x.copyWith(rsiThreshold: v)),
                       ),
-                      _PairField(
-                        title: 'σ倍率 (ボリンジャーバンドの幅)',
-                        shortValue: draft.short.bbSigma,
-                        longValue: draft.long.bbSigma,
-                        onShortChanged: (v) =>
-                            _updateShort((x) => x.copyWith(bbSigma: v)),
-                        onLongChanged: (v) =>
-                            _updateLong((x) => x.copyWith(bbSigma: v)),
+                      _SharedTimeframes(
+                        value: shared.timeframes,
+                        onChanged: (v) =>
+                            _updateBoth((x) => x.copyWith(timeframes: v)),
                       ),
-                      _PairField(
-                        title: 'レバレッジ [倍]',
+                      _SharedField(
+                        title: 'σ 倍率 (BB(20) の幅)',
+                        value: shared.bbSigma,
+                        onChanged: (v) =>
+                            _updateBoth((x) => x.copyWith(bbSigma: v)),
+                      ),
+                      _SharedField(
+                        title: '保持する足',
+                        suffix: '本',
                         integer: true,
-                        shortValue: draft.short.leverage.toDouble(),
-                        longValue: draft.long.leverage.toDouble(),
-                        onShortChanged: (v) => _updateShort(
-                          (x) => x.copyWith(leverage: v.toInt()),
-                        ),
-                        onLongChanged: (v) =>
-                            _updateLong((x) => x.copyWith(leverage: v.toInt())),
-                      ),
-                      _PairField(
-                        title: '1回あたりの証拠金 [USDT]',
-                        shortValue: draft.short.marginPerTradeUsdt,
-                        longValue: draft.long.marginPerTradeUsdt,
-                        onShortChanged: (v) => _updateShort(
-                          (x) => x.copyWith(marginPerTradeUsdt: v),
-                        ),
-                        onLongChanged: (v) => _updateLong(
-                          (x) => x.copyWith(marginPerTradeUsdt: v),
+                        value: shared.historyBars.toDouble(),
+                        onChanged: (v) => _updateBoth(
+                          (x) => x.copyWith(historyBars: v.toInt()),
                         ),
                       ),
-                      _PairField(
+                      _SharedField(
+                        title: 'レバレッジ',
+                        suffix: '倍',
+                        integer: true,
+                        value: shared.leverage.toDouble(),
+                        onChanged: (v) =>
+                            _updateBoth((x) => x.copyWith(leverage: v.toInt())),
+                      ),
+                      _SharedField(
+                        title: '1 回の証拠金',
+                        suffix: 'USDT',
+                        value: shared.marginPerTradeUsdt,
+                        onChanged: (v) => _updateBoth(
+                          (x) => x.copyWith(marginPerTradeUsdt: v),
+                        ),
+                      ),
+                      _SharedField(
                         title: '利確の係数',
-                        shortValue: draft.short.takeProfitFactor,
-                        longValue: draft.long.takeProfitFactor,
-                        onShortChanged: (v) => _updateShort(
-                          (x) => x.copyWith(takeProfitFactor: v),
-                        ),
-                        onLongChanged: (v) =>
-                            _updateLong((x) => x.copyWith(takeProfitFactor: v)),
+                        value: shared.takeProfitFactor,
+                        onChanged: (v) =>
+                            _updateBoth((x) => x.copyWith(takeProfitFactor: v)),
                       ),
                       const _Hint(
-                        '0.5 なら、行きすぎた分の半分まで戻ったところで利確します。'
-                        '0 より大きく 1 未満で入れてください。',
+                        '行き過ぎた分の内、この割合だけ戻った所で利確します'
+                        ' (0.5 なら半分)。0 より大きく 1 未満。',
                       ),
-                      _PairField(
-                        title: '利確幅の下限 [%]',
-                        shortValue: draft.short.minTakeProfitPercent,
-                        longValue: draft.long.minTakeProfitPercent,
-                        onShortChanged: (v) => _updateShort(
-                          (x) => x.copyWith(minTakeProfitPercent: v),
-                        ),
-                        onLongChanged: (v) => _updateLong(
+                      _SharedField(
+                        title: '利確幅の下限',
+                        suffix: '%',
+                        value: shared.minTakeProfitPercent,
+                        onChanged: (v) => _updateBoth(
                           (x) => x.copyWith(minTakeProfitPercent: v),
                         ),
                       ),
-                      _PairSwitch(
-                        title: '大きく飛び出したら RSI を待たずに入る',
-                        shortValue: draft.short.bandBreakoutEntryEnabled,
-                        longValue: draft.long.bandBreakoutEntryEnabled,
-                        onShortChanged: (v) => _updateShort(
-                          (x) => x.copyWith(bandBreakoutEntryEnabled: v),
-                        ),
-                        onLongChanged: (v) => _updateLong(
+                      _CompactSwitch(
+                        label: '大きく飛び出したら RSI を待たずに入る',
+                        value: shared.bandBreakoutEntryEnabled,
+                        onChanged: (v) => _updateBoth(
                           (x) => x.copyWith(bandBreakoutEntryEnabled: v),
                         ),
                       ),
                       const _Hint(
-                        'ふつうは「RSI がしきい値に届く」と「±σ のバンドを抜ける」が'
-                        'そろったときに入ります。オンにすると、急騰・急落で価格が'
-                        'バンドの外へ大きく飛び出したときは、RSI がしきい値に'
-                        '届いていなくても入ります。',
+                        '普段は「RSI が閾値に届く」と「±σ のバンドを抜ける」が揃った時に'
+                        '入ります。オンにすると、価格がバンドの外へ大きく飛び出した時は'
+                        ' RSI を待たずに入ります。',
                       ),
-                      if (draft.short.bandBreakoutEntryEnabled ||
-                          draft.long.bandBreakoutEntryEnabled) ...[
-                        _PairField(
+                      if (shared.bandBreakoutEntryEnabled) ...[
+                        _SharedField(
                           title: 'バンドの外へ何 % 飛び出したら入るか',
-                          shortSuffix: '% 以上',
-                          longSuffix: '% 以上',
-                          shortValue: draft.short.bandBreakoutPercent,
-                          longValue: draft.long.bandBreakoutPercent,
-                          onShortChanged: (v) => _updateShort(
-                            (x) => x.copyWith(bandBreakoutPercent: v),
-                          ),
-                          onLongChanged: (v) => _updateLong(
+                          suffix: '% 以上',
+                          value: shared.bandBreakoutPercent,
+                          onChanged: (v) => _updateBoth(
                             (x) => x.copyWith(bandBreakoutPercent: v),
                           ),
                         ),
                         _Hint(_breakoutHint()),
                       ],
-                      _PairField(
-                        title: '資金調達 負担率の上限 [%]',
-                        shortValue: draft.short.maxFundingBurdenPercent,
-                        longValue: draft.long.maxFundingBurdenPercent,
-                        onShortChanged: (v) => _updateShort(
-                          (x) => x.copyWith(maxFundingBurdenPercent: v),
-                        ),
-                        onLongChanged: (v) => _updateLong(
+                      _SharedField(
+                        title: '資金調達: 負担率の上限',
+                        suffix: '%',
+                        value: shared.maxFundingBurdenPercent,
+                        onChanged: (v) => _updateBoth(
                           (x) => x.copyWith(maxFundingBurdenPercent: v),
                         ),
                       ),
-                      _PairField(
-                        title: '資金調達 間隔の下限 [時間]',
+                      _SharedField(
+                        title: '資金調達: 間隔の下限',
+                        suffix: '時間',
                         integer: true,
-                        shortValue: draft.short.minFundingIntervalHours
-                            .toDouble(),
-                        longValue: draft.long.minFundingIntervalHours
-                            .toDouble(),
-                        onShortChanged: (v) => _updateShort(
-                          (x) => x.copyWith(minFundingIntervalHours: v.toInt()),
-                        ),
-                        onLongChanged: (v) => _updateLong(
+                        value: shared.minFundingIntervalHours.toDouble(),
+                        onChanged: (v) => _updateBoth(
                           (x) => x.copyWith(minFundingIntervalHours: v.toInt()),
                         ),
                       ),
-                      const _Hint(
-                        'この 2 つは、その向きが資金調達を「支払う側」のときだけ効きます。'
-                        '受け取る側なら率が大きくても見送りません。',
+                      const _Hint('この 2 つは、資金調達を支払う側の時だけ効きます。'),
+                      _CompactSwitch(
+                        label: '含み損が出たら買い足し / 売り足しする',
+                        value: shared.addOnEnabled,
+                        onChanged: (v) =>
+                            _updateBoth((x) => x.copyWith(addOnEnabled: v)),
                       ),
-                      _PairSwitch(
-                        title: '含み損が出たら買い足し / 売り足しする',
-                        shortValue: draft.short.addOnEnabled,
-                        longValue: draft.long.addOnEnabled,
-                        onShortChanged: (v) =>
-                            _updateShort((x) => x.copyWith(addOnEnabled: v)),
-                        onLongChanged: (v) =>
-                            _updateLong((x) => x.copyWith(addOnEnabled: v)),
-                      ),
-                      if (draft.short.addOnEnabled ||
-                          draft.long.addOnEnabled) ...[
-                        _PairField(
-                          title: '指値を置く含み損 [%] (証拠金に対して)',
-                          shortValue: draft.short.addOnLossPercent,
-                          longValue: draft.long.addOnLossPercent,
-                          onShortChanged: (v) => _updateShort(
-                            (x) => x.copyWith(addOnLossPercent: v),
-                          ),
-                          onLongChanged: (v) => _updateLong(
+                      if (shared.addOnEnabled) ...[
+                        _SharedField(
+                          title: '指値を置く含み損 (証拠金に対して)',
+                          suffix: '%',
+                          value: shared.addOnLossPercent,
+                          onChanged: (v) => _updateBoth(
                             (x) => x.copyWith(addOnLossPercent: v),
                           ),
                         ),
-                        _PairField(
-                          title: '残り資金のうち使う割合 [%]',
-                          shortValue: draft.short.addOnBudgetPercent,
-                          longValue: draft.long.addOnBudgetPercent,
-                          onShortChanged: (v) => _updateShort(
-                            (x) => x.copyWith(addOnBudgetPercent: v),
-                          ),
-                          onLongChanged: (v) => _updateLong(
+                        _SharedField(
+                          title: '残り資金の内、使う割合',
+                          suffix: '%',
+                          value: shared.addOnBudgetPercent,
+                          onChanged: (v) => _updateBoth(
                             (x) => x.copyWith(addOnBudgetPercent: v),
                           ),
                         ),
                         const _Hint(
-                          '成行で建てた直後、口座に残っている USDT のこの割合を証拠金にして、'
-                          '含み損がこの % になる価格に同じ向きの指値を置きます '
-                          '(ロングは建値の下に買い、ショートは建値の上に売り。'
-                          'レバレッジ 1 倍なら建値からの値動き % と同じ)。\n'
-                          '約定すると平均建値が有利な側に寄ります。利確の目標は動かしません。'
-                          '指値を置いた分の資金は凍結されるので、100% にすると次の銘柄に'
-                          '回す資金が無くなります。決済したあとは指値を取り消しますが、'
-                          '次の判定までの間 (最大で判定間隔ぶん) は残ることがあります。',
+                          '建てた直後、残っている USDT のこの割合を証拠金にして、含み損が'
+                          'この % になる価格に同じ向きの指値を置きます。約定すると平均建値が'
+                          '有利な側に寄ります (利確の目標は動かしません)。指値の分の資金は'
+                          '凍結されるので、100% にすると次の銘柄に回す資金が無くなります。',
                         ),
                       ],
                     ],
@@ -479,20 +413,19 @@ class _SettingsPageState extends State<SettingsPage> {
                         ],
                       ),
                       const _Hint(
-                        '同時に持てる件数に上限はありません。\n'
-                        'ポジションを持っている銘柄は、持っている間は 1 回だけ発火します '
-                        '(向きが同じでも違っても重ねて建てません)。'
-                        '決済してからは「再エントリー待ち」の間だけ間を置き、'
-                        'そのあとは同じ足でももう一度入れます。\n'
-                        '新規建ては成行・分離マージン、利確は発注と同時に取引所へ預け、'
-                        '資金調達率のフィルタは常に効きます (切り替えはありません)。',
+                        '同時に持てる件数に上限はありません。'
+                        'ポジションを持っている銘柄は、持っている間は 1 回だけ発火します'
+                        ' (重ねて建てません)。決済後は「再エントリー待ち」を過ぎれば、'
+                        '同じ足でももう一度入ります。\n'
+                        '新規建ては成行・分離マージンで、利確は発注と同時に取引所へ'
+                        '預けます。資金調達率の絞り込みは常に効きます。',
                       ),
                     ],
                   ),
 
                   _Group(
                     title: 'サーバーへの接続',
-                    description: 'ボットはサーバーで動きます。アプリは繋いで見る・操作するだけです。',
+                    description: 'ボットはサーバーで動き、アプリは繋いで見る・操作するだけです。',
                     children: [
                         const SizedBox(height: 8),
                         TextField(
@@ -577,21 +510,17 @@ class _SettingsPageState extends State<SettingsPage> {
                           check: _checkResult,
                         ),
                         const _Hint(
-                          'URL は ws:// か wss:// で始め、最後に /ws を付けます '
-                          '(例: ws://192.168.0.10:8080/ws)。'
-                          'http:// と書いた場合や /ws を省いた場合はこちらで直します。\n'
-                          '接続トークンは、サーバーを立てたときに deploy/setup.sh が作る '
-                          'BOT_TOKEN と同じ値です (サーバーの /etc/mexc-bot/env に'
-                          '入っています)。前後の空白や改行は取り除いて送ります。\n'
-                          'URL とトークンは入れ終わってから「保存して繋ぎ直す」を'
-                          '押してください。',
+                          'URL の例: ws://192.168.0.10:8080/ws (http:// や /ws の'
+                          '書き忘れはこちらで直します)。接続トークンは、サーバーの '
+                          '/etc/mexc-bot/env にある BOT_TOKEN の値です。'
+                          '入れ終わってから「保存して繋ぎ直す」を押して下さい。',
                         ),
                       const _Hint(
-                        '「開始」を押すと、「停止」を押すまでサーバーで動き続けます '
-                        '(アプリを閉じても落ちても止まりません)。'
-                        '取引所の API キーはサーバーの /etc/mexc-bot/env に入れます。'
-                        '残高・建玉・決済の記録も、サーバーが取引所から取って返します。',
+                        '「開始」を押すと、「停止」を押すまでサーバーで動き続けます'
+                        ' (アプリを閉じても止まりません)。取引所の API キーは'
+                        'サーバーの /etc/mexc-bot/env に入れます。',
                       ),
+                      _PushInfo(topic: pushTopic),
                     ],
                   ),
 
@@ -611,7 +540,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 TextButton(
                   onPressed: () {
                     setState(() {
-                      _draft = const StrategyConfig();
+                      _draft = _normalize(const StrategyConfig());
                     });
                   },
                   child: const Text('既定値', style: TextStyle(fontSize: 12)),
@@ -830,112 +759,146 @@ class _PairSwitch extends StatelessWidget {
   }
 }
 
-/// 判定する時間軸を、ショートとロングの 2 列で選ばせる。
-///
-/// 1 行 1 時間軸の表にして、その場で見比べながら入れられるようにする。
-class _PairTimeframes extends StatelessWidget {
-  const _PairTimeframes({
-    required this.shortValue,
-    required this.longValue,
-    required this.onShortChanged,
-    required this.onLongChanged,
+/// 選べる時間足。1 分足と 8 時間足は使わない。
+const List<Timeframe> timeframeChoices = [
+  Timeframe.m5,
+  Timeframe.m15,
+  Timeframe.m30,
+  Timeframe.h1,
+  Timeframe.h4,
+  Timeframe.d1,
+];
+
+/// ショートとロングで同じ値を使う数値の項目。
+class _SharedField extends StatelessWidget {
+  const _SharedField({
+    required this.title,
+    required this.value,
+    required this.onChanged,
+    this.suffix,
+    this.integer = false,
   });
 
-  final List<Timeframe> shortValue;
-  final List<Timeframe> longValue;
-  final ValueChanged<List<Timeframe>> onShortChanged;
-  final ValueChanged<List<Timeframe>> onLongChanged;
-
-  static const double _columnWidth = 64;
-
-  /// [tf] を入れた / 外した新しい並びを返す。短い足から順に並べる。
-  static List<Timeframe> _toggled(
-    List<Timeframe> current,
-    Timeframe tf,
-    bool selected,
-  ) {
-    final list = [...current];
-    if (selected) {
-      if (!list.contains(tf)) list.add(tf);
-      list.sort((a, b) => a.seconds.compareTo(b.seconds));
-    } else {
-      list.remove(tf);
-    }
-    return list;
-  }
+  final String title;
+  final double value;
+  final ValueChanged<double> onChanged;
+  final String? suffix;
+  final bool integer;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final headStyle = theme.textTheme.bodySmall?.copyWith(fontSize: 11);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: _NumberField(
+        label: title,
+        suffix: suffix,
+        value: value,
+        integer: integer,
+        dense: true,
+        onChanged: onChanged,
+      ),
+    );
+  }
+}
 
+/// 判定に使う時間足。ショートとロングで同じものを使う。
+class _SharedTimeframes extends StatelessWidget {
+  const _SharedTimeframes({required this.value, required this.onChanged});
+
+  final List<Timeframe> value;
+  final ValueChanged<List<Timeframe>> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(top: 4, bottom: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            '判定に使う時間軸',
+            '判定に使う時間足 (それぞれで判定します)',
             style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
           ),
-          Row(
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
             children: [
-              const Expanded(child: SizedBox()),
-              SizedBox(
-                width: _columnWidth,
-                child: Text('ショート', style: headStyle, textAlign: TextAlign.center),
-              ),
-              SizedBox(
-                width: _columnWidth,
-                child: Text('ロング', style: headStyle, textAlign: TextAlign.center),
-              ),
+              for (final tf in timeframeChoices)
+                FilterChip(
+                  label: Text(tf.label, style: const TextStyle(fontSize: 12)),
+                  selected: value.contains(tf),
+                  visualDensity: VisualDensity.compact,
+                  onSelected: (on) => onChanged(
+                    [
+                      for (final t in timeframeChoices)
+                        if (t == tf ? on : value.contains(t)) t,
+                    ],
+                  ),
+                ),
             ],
           ),
-          for (final tf in Timeframe.values)
-            Row(
-              children: [
-                Expanded(
-                  child: Text(tf.label, style: const TextStyle(fontSize: 12)),
-                ),
-                _Cell(
-                  value: shortValue.contains(tf),
-                  onChanged: (v) =>
-                      onShortChanged(_toggled(shortValue, tf, v)),
-                ),
-                _Cell(
-                  value: longValue.contains(tf),
-                  onChanged: (v) => onLongChanged(_toggled(longValue, tf, v)),
-                ),
-              ],
-            ),
         ],
       ),
     );
   }
 }
 
-/// 時間軸の表の中の、入れる / 外すを 1 つ選ぶところ。
-class _Cell extends StatelessWidget {
-  const _Cell({required this.value, required this.onChanged});
+/// スマホへの通知の受け取り方。サーバーが ntfy で送る。
+class _PushInfo extends StatelessWidget {
+  const _PushInfo({required this.topic});
 
-  final bool value;
-  final ValueChanged<bool> onChanged;
+  /// ntfy の購読名。サーバーに設定が無ければ null。
+  final String? topic;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: _PairTimeframes._columnWidth,
-      height: 30,
-      child: InkWell(
-        onTap: () => onChanged(!value),
-        child: Center(
-          child: Checkbox(
-            value: value,
-            onChanged: (v) => onChanged(v ?? false),
-            visualDensity: VisualDensity.compact,
-            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    final theme = Theme.of(context);
+    final t = topic;
+    if (t == null) {
+      return const _Hint(
+        'スマホへの通知: サーバーの /etc/mexc-bot/env に NTFY_TOPIC が無いので、'
+        'アプリを開いている間だけ通知します。',
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'スマホへの通知 (ntfy)',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
           ),
-        ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Expanded(
+                child: SelectableText(
+                  t,
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: t));
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('購読名を写しました')),
+                  );
+                },
+                icon: const Icon(Icons.copy, size: 14),
+                label: const Text('写す', style: TextStyle(fontSize: 12)),
+              ),
+            ],
+          ),
+          Text(
+            'ntfy アプリ (Google Play) でこの名前を購読すると、アプリを閉じていても'
+            '建てた・決済した・開始・停止の通知が届きます。名前を知っていれば誰でも'
+            '読めるので、人に教えないで下さい。',
+            style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
+          ),
+        ],
       ),
     );
   }

@@ -115,7 +115,7 @@ class PriceChart extends StatelessWidget {
     final shown = tail(candles);
     final bands = tail(_bollingerSeries(closes, bbPeriod, bbSigma));
     final showStrategy = sigmas.contains(bbSigma);
-    final emas = tail(Indicators.emaSeries(closes, emaPeriod));
+    final emas = tail(_reliableEma(closes, emaPeriod));
     // σ を変えても平均と標準偏差は同じなので、判定のバンドから引き直す。
     final others = {
       for (final s in sigmas)
@@ -141,7 +141,7 @@ class PriceChart extends StatelessWidget {
     }.toList()..sort();
     final extraEmaLines = [
       for (final p in periods)
-        (values: tail(Indicators.emaSeries(closes, p)), color: _extraColor(p)),
+        (values: tail(_reliableEma(closes, p)), color: _extraColor(p)),
     ];
 
     // 値幅は、ローソク・バンド・横線がすべて入るように取る。
@@ -170,7 +170,7 @@ class PriceChart extends StatelessWidget {
     if (!minPrice.isFinite || !maxPrice.isFinite || maxPrice <= minPrice) {
       return SizedBox(
         height: height,
-        child: const Center(child: Text('値幅を計算できません')),
+        child: const Center(child: Text('値幅を計算出来ません')),
       );
     }
     final pad = (maxPrice - minPrice) * 0.06;
@@ -265,6 +265,20 @@ class PriceChart extends StatelessWidget {
     );
   }
 
+  /// 正しい値になった所からの EMA。それより前は null (描かない)。
+  ///
+  /// EMA は最初の [period] 本の平均から始めるので、始めてすぐは取れなかった
+  /// 過去の足の分だけずれている。期間の 2 倍の足を重ねれば、始めの影響は
+  /// 2% 未満になるので、そこから描く。
+  static List<double?> _reliableEma(List<double> closes, int period) {
+    final series = Indicators.emaSeries(closes, period);
+    final first = period - 1 + period * 2;
+    for (var i = 0; i < series.length && i < first; i++) {
+      series[i] = null;
+    }
+    return series;
+  }
+
   /// 各時点のボリンジャーバンド。先頭 [period]-1 本は null。
   static List<BollingerPoint?> _bollingerSeries(
     List<double> closes,
@@ -353,8 +367,13 @@ class _PriceChartPainter extends CustomPainter {
     double x(int i) => (i + 0.5) * step;
 
     _paintGrid(canvas, plotWidth, y);
+    // 値幅に入らない線 (遠く離れた EMA など) が枠の外へはみ出さないよう、
+    // ローソクと指標は描く範囲で切り取る。
+    canvas.save();
+    canvas.clipRect(Rect.fromLTWH(0, topPadding, plotWidth, plotHeight));
     _paintCandles(canvas, step, x, y);
     _paintIndicators(canvas, x, y);
+    canvas.restore();
     _paintLines(canvas, size, plotWidth, y);
     _paintTimeLabels(canvas, size, plotWidth);
   }

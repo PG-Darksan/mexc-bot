@@ -192,7 +192,11 @@ class AppState extends ChangeNotifier {
     final wasRunning = _lastRunning;
     _lastRunning = snapshot.running;
     final notifier = _notifier;
-    if (notifier == null) return;
+    // サーバーが ntfy で送っているなら、アプリでは出さない (二重に届くため)。
+    if (notifier == null || snapshot.pushTopic != null) {
+      _changes.update(snapshot);
+      return;
+    }
     if (wasRunning != null && wasRunning != snapshot.running) {
       unawaited(notifier.show(runningMessage(snapshot.running)));
     }

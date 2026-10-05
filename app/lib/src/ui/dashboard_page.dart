@@ -150,7 +150,7 @@ class RunningStatusSection extends StatelessWidget {
             _Stat('監視銘柄', '${snapshot.watchedSymbolCount} 銘柄'),
             _Stat('前回の判定', formatTimeShort(snapshot.lastCycleAt)),
             _Stat(
-              '判定にかかった時間',
+              '判定に掛かった時間',
               snapshot.lastCycleDurationMs == null
                   ? '-'
                   : '${(snapshot.lastCycleDurationMs! / 1000).toStringAsFixed(1)} 秒',
@@ -166,9 +166,9 @@ class RunningStatusSection extends StatelessWidget {
         _Note(
           snapshot.running
               ? '判定は ${config.evaluationIntervalSeconds} 秒ごとです。'
-                    'かかった時間がこれより短ければ追いついています。'
-              : '止まっています。監視する銘柄は動いているときに決め直すので、'
-                    '出来高の下限などを変えたときは「開始」すると反映されます。',
+                    '掛かった時間がこれより短ければ追い付いています。'
+              : '止まっています。監視する銘柄は動いている時に決め直すので、'
+                    '出来高の下限などを変えた時は「開始」すると反映されます。',
         ),
       ],
     );

@@ -199,10 +199,10 @@ class _NoticeBarState extends State<_NoticeBar> {
       if (state.connection == ControllerConnection.connected &&
           !state.snapshot.credentialsConfigured)
         'サーバーに取引所の API キーが入っていません。注文は出ません '
-            '(サーバーの /etc/mexc-bot/env に入れてください)。',
+            '(サーバーの /etc/mexc-bot/env に入れて下さい)。',
       if (state.connection == ControllerConnection.error)
         'サーバーに繋がりません。設定タブのURLと接続トークン、'
-            'サーバーが動いているかを確認してください。',
+            'サーバーが動いているかを確認して下さい。',
     ];
     // 出ていない知らせは覚えておく必要がない。ここで落としても、
     // いま画面に出すものは変わらない (伏せる対象が減るだけ)。

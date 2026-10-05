@@ -60,7 +60,7 @@ class TradeNotifier {
             android: AndroidNotificationDetails(
               'trades',
               '売買',
-              channelDescription: '建てたときと決済したときの知らせ',
+              channelDescription: '建てた時と決済した時の知らせ',
               importance: Importance.high,
               priority: Priority.high,
             ),
