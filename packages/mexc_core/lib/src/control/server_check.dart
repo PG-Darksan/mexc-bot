@@ -87,7 +87,7 @@ Future<ServerCheckResult> checkBotServer({
   if (uri == null) {
     return const ServerCheckResult(
       ServerCheckStatus.badUrl,
-      'URL の書き方を確かめてください。例: ws://192.168.0.10:8080/ws '
+      'URL の書き方を確かめて下さい。例: ws://192.168.0.10:8080/ws '
       'または wss://自分の名前.duckdns.org/ws',
     );
   }
@@ -96,7 +96,7 @@ Future<ServerCheckResult> checkBotServer({
     return ServerCheckResult(
       ServerCheckStatus.noToken,
       '接続トークンが空です。サーバーの /etc/mexc-bot/env にある '
-      'BOT_TOKEN と同じ値を入れてください。',
+      'BOT_TOKEN と同じ値を入れて下さい。',
       url: uri,
     );
   }
@@ -116,7 +116,7 @@ Future<ServerCheckResult> checkBotServer({
     return ServerCheckResult(
       ServerCheckStatus.unreachable,
       '$uri に届きません (時間切れ)。'
-      'サーバーが動いているか、ポートが開いているかを確かめてください。',
+      'サーバーが動いているか、ポートが開いているかを確かめて下さい。',
       url: uri,
     );
   } catch (e) {
@@ -194,8 +194,8 @@ Future<ServerCheckResult> checkBotServer({
     onTimeout: () => ServerCheckResult(
       ServerCheckStatus.noReply,
       '繋がりましたが返事がありません。'
-      '$uri が本当にこのボットのサーバーかを確かめてください '
-      '(別のサービスが同じポートで動いていることがあります)。',
+      '$uri が本当にこのボットのサーバーかを確かめて下さい '
+      '(別のサービスが同じポートで動いている事があります)。',
       url: uri,
     ),
   );
@@ -210,6 +210,6 @@ String _reason(Object error) => switch (error) {
   SocketException(:final message, :final osError) =>
     osError?.message ?? (message.isEmpty ? '$error' : message),
   WebSocketException(:final message) => message,
-  HandshakeException() => 'TLS の検証に失敗しました (証明書を確かめてください)',
+  HandshakeException() => 'TLS の検証に失敗しました (証明書を確かめて下さい)',
   _ => '$error',
 };

@@ -107,7 +107,7 @@ class RemoteBotController implements BotController {
     }
     final authToken = token.trim();
     if (authToken.isEmpty) {
-      _giveUp('接続トークンが空です。サーバーの BOT_TOKEN と同じ値を入れてください。');
+      _giveUp('接続トークンが空です。サーバーの BOT_TOKEN と同じ値を入れて下さい。');
       return;
     }
 
@@ -135,7 +135,7 @@ class RemoteBotController implements BotController {
         onDone: () => _scheduleReconnect(
           _authenticated
               ? 'サーバーとの接続が切れました'
-              : '繋いだ直後に切られました。接続トークンを確かめてください。',
+              : '繋いだ直後に切られました。接続トークンを確かめて下さい。',
         ),
         cancelOnError: true,
       );
@@ -158,11 +158,11 @@ class RemoteBotController implements BotController {
         if (_authenticated || _disposed) return;
         _scheduleReconnect(
           'サーバーから返事がありません。$uri が本当にこのボットのサーバーか'
-          '確かめてください。',
+          '確かめて下さい。',
         );
       });
     } catch (e) {
-      _scheduleReconnect('接続できません (${_shortReason(e)})');
+      _scheduleReconnect('接続出来ません (${_shortReason(e)})');
     }
   }
 
@@ -200,7 +200,7 @@ class RemoteBotController implements BotController {
         }
         // 認証前に返るエラーはトークン違い。つなぎ直しても通らない。
         if (!_authenticated) {
-          _giveUp('サーバーに拒まれました: $text (接続トークンを確かめてください)');
+          _giveUp('サーバーに拒まれました: $text (接続トークンを確かめて下さい)');
         }
       case ServerMessageType.hello:
         // ここで初めて「つながった」と言える。

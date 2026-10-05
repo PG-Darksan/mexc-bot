@@ -76,6 +76,18 @@ EOF
   echo
 fi
 
+# スマホへの通知 (ntfy) の購読名。以前に作った env にも足す。
+if ! grep -q '^NTFY_TOPIC=' "$ENV_DIR/env"; then
+  NTFY_TOPIC="mexc-$(head -c 48 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 24)"
+  cat >> "$ENV_DIR/env" <<EOF
+
+# スマホへの通知 (ntfy)。ntfy アプリでこの名前を購読すると、アプリを閉じていても届く。
+# 名前を知っていれば誰でも読めるので、人に教えない。空にすると送らない。
+NTFY_TOPIC=$NTFY_TOPIC
+EOF
+  echo "    通知の購読名を作りました: $NTFY_TOPIC"
+fi
+
 echo "==> systemd に登録する"
 # 自分の中 (127.0.0.1) は常に開けておく。Caddy を前に置く構成と、
 # health / status.dart の確認がこれで通る。
@@ -121,5 +133,6 @@ else
   echo "       入れてこの setup.sh をもう一度流すか、Caddy を前に置いてください。"
 fi
 echo "  接続トークンは: grep BOT_TOKEN $ENV_DIR/env"
+echo "  通知の購読名は: grep NTFY_TOPIC $ENV_DIR/env (ntfy アプリで購読)"
 echo
 echo "このあと deploy/README.md の「外から繋げるようにする」を読んでください。"

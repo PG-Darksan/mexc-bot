@@ -123,7 +123,7 @@ class MarketDataFeed {
       _fundings[symbol] = info;
     } catch (e) {
       // 取れなければ次のサイクルでまた試す。
-      onLog?.call('$symbol の資金調達の間隔を取得できません (後で再取得します): $e');
+      onLog?.call('$symbol の資金調達の間隔を取得出来ません (後で再取得します): $e');
     } finally {
       _cycleLoading.remove(symbol);
     }

@@ -8,14 +8,14 @@ enum RejectReason {
   insufficientData('履歴が足りない'),
   notTradable('API発注不可の銘柄'),
   lowVolume('24h出来高が不足'),
-  rsiNotReached('RSIがしきい値に届かない'),
+  rsiNotReached('RSIが閾値に届かない'),
   insideBand('バンド内'),
   fundingRateTooHigh('資金調達率の負担が大きい'),
   fundingIntervalTooShort('資金調達の間隔が短い'),
   fundingUnknown('資金調達率が未取得'),
   alreadyHolding('同じ銘柄を保有中'),
   cooldown('クールダウン中'),
-  profitTooSmall('利確幅が小さすぎる'),
+  profitTooSmall('利確幅が小さ過ぎる'),
   volumeTooSmall('発注数量が最小未満'),
   insufficientBalance('残高不足');
 

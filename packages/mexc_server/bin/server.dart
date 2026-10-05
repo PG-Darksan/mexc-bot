@@ -44,7 +44,7 @@ Future<void> main(List<String> args) async {
   final token = Platform.environment['BOT_TOKEN']?.trim();
   if (token == null || token.isEmpty) {
     stderr.writeln(
-      'BOT_TOKEN が設定されていません。アプリからの接続を認証できないので起動を中止します。',
+      'BOT_TOKEN が設定されていません。アプリからの接続を認証出来ないので起動を中止します。',
     );
     exit(64);
   }
@@ -63,10 +63,20 @@ Future<void> main(List<String> args) async {
   );
   engine.restorePositions(savedPositions);
 
+  // アプリを閉じていてもスマホに届くよう、通知はサーバーから ntfy で送る。
+  final topic = Platform.environment['NTFY_TOPIC']?.trim() ?? '';
+  final push = topic.isEmpty
+      ? null
+      : PushNotifier(
+          topic: topic,
+          server: Platform.environment['NTFY_URL']?.trim(),
+        );
+
   final server = BotServer(
     engine: engine,
     store: store,
     token: token,
+    push: push,
   );
 
   final port = int.tryParse(opts['port'] as String) ?? 8080;
@@ -122,11 +132,15 @@ class BotServer {
     required this.engine,
     required this.store,
     required this.token,
+    this.push,
   });
 
   final BotEngine engine;
   final BotStateStore store;
   final String token;
+
+  /// スマホへの通知。NTFY_TOPIC が無ければ null。
+  final PushNotifier? push;
 
   final Set<_Client> _clients = {};
   final List<BotEvent> _recentEvents = [];
@@ -145,7 +159,12 @@ class BotServer {
     required List<String> hosts,
     required int port,
   }) async {
-    _snapshotSub = engine.snapshots.listen(_broadcastSnapshot);
+    // 起動した時点の状態を元にして、そこからの変化を知らせる。
+    push?.onSnapshot(engine.snapshot);
+    _snapshotSub = engine.snapshots.listen((snapshot) {
+      _broadcastSnapshot(snapshot);
+      push?.onSnapshot(snapshot);
+    });
     _eventSub = engine.events.listen((event) {
       _recentEvents.add(event);
       if (_recentEvents.length > maxRecentEvents) {
@@ -293,7 +312,7 @@ class BotServer {
       client.send(
         WireMessage(
           type: ServerMessageType.snapshot,
-          payload: engine.snapshot.toJson(),
+          payload: _snapshotPayload(engine.snapshot),
         ),
       );
       client.send(
@@ -352,7 +371,7 @@ class BotServer {
           client.send(
             WireMessage(
               type: ServerMessageType.snapshot,
-              payload: engine.snapshot.toJson(),
+              payload: _snapshotPayload(engine.snapshot),
             ),
           );
           return;
@@ -375,7 +394,7 @@ class BotServer {
               id: message.id,
               payload: {
                 'message':
-                    'APIキーはサーバー側の環境変数 (MEXC_API_KEY / MEXC_API_SECRET) で設定してください。',
+                    'APIキーはサーバー側の環境変数 (MEXC_API_KEY / MEXC_API_SECRET) で設定して下さい。',
               },
             ),
           );
@@ -401,10 +420,16 @@ class BotServer {
     _broadcast(
       WireMessage(
         type: ServerMessageType.snapshot,
-        payload: snapshot.toJson(),
+        payload: _snapshotPayload(snapshot),
       ),
     );
   }
+
+  /// アプリへ送る状態。通知の購読名も添える (アプリの設定に出すため)。
+  Map<String, dynamic> _snapshotPayload(BotSnapshot snapshot) => {
+    ...snapshot.toJson(),
+    'pushTopic': push?.topic,
+  };
 
   void _broadcast(WireMessage message) {
     for (final client in _clients.toList()) {
@@ -428,6 +453,7 @@ class BotServer {
     }
     _retryTimers.clear();
     _saveTimer?.cancel();
+    push?.close();
     await _persist();
     await _snapshotSub?.cancel();
     await _eventSub?.cancel();
@@ -461,4 +487,101 @@ class _Client {
       channel.sink.close();
     } catch (_) {}
   }
+}
+
+/// 建てた・決済した・動き出した・止まった時に、ntfy でスマホへ知らせる。
+///
+/// アプリを閉じていても届くように、サーバーから送る。届いた状態を前と
+/// 見比べて変化を拾う。最初に渡された状態 (起動した時点) は覚えるだけ。
+class PushNotifier {
+  PushNotifier({required this.topic, String? server})
+    : server = (server == null || server.isEmpty) ? 'https://ntfy.sh' : server;
+
+  /// ntfy の購読名。知っていれば誰でも読めるので、推測できない名前にする。
+  final String topic;
+  final String server;
+
+  final HttpClient _http = HttpClient()
+    ..connectionTimeout = const Duration(seconds: 10);
+  Set<String>? _open;
+  Set<String>? _closed;
+  bool? _running;
+
+  void onSnapshot(BotSnapshot s) {
+    final knownOpen = _open;
+    final knownClosed = _closed;
+    final wasRunning = _running;
+    _open = {for (final p in s.positions) p.id};
+    _closed = {for (final p in s.closedPositions) p.id};
+    _running = s.running;
+    if (knownOpen == null || knownClosed == null || wasRunning == null) return;
+
+    for (final p in s.positions) {
+      if (knownOpen.contains(p.id) || knownClosed.contains(p.id)) continue;
+      unawaited(
+        send(
+          '建てました: ${_name(p)} ${_side(p)}',
+          '${p.vol} 枚 @ ${p.entryPrice} / 利確 ${p.takeProfitPrice}'
+              ' (${p.timeframe.label})',
+          tag: 'chart_with_upwards_trend',
+        ),
+      );
+    }
+    for (final p in s.closedPositions) {
+      if (knownClosed.contains(p.id)) continue;
+      final pnl = p.realizedPnl ?? 0;
+      unawaited(
+        send(
+          '決済しました: ${_name(p)} ${pnl >= 0 ? '+' : ''}'
+              '${pnl.toStringAsFixed(4)} USDT',
+          '${_side(p)} ${p.vol} 枚 / ${p.entryPrice} → ${p.closePrice ?? '-'}'
+              '${p.note == null ? '' : ' (${p.note})'}',
+          tag: pnl >= 0 ? 'moneybag' : 'small_red_triangle_down',
+        ),
+      );
+    }
+    if (wasRunning != s.running) {
+      unawaited(
+        s.running
+            ? send('ボットを開始しました', 'サーバーで売買を始めました。', tag: 'arrow_forward')
+            : send(
+                'ボットを停止しました',
+                'サーバーのボットが止まりました。建玉と預けた利確はそのまま残ります。',
+                tag: 'stop_button',
+              ),
+      );
+    }
+  }
+
+  static String _name(ManagedPosition p) => p.symbol.replaceAll('_', '');
+
+  static String _side(ManagedPosition p) =>
+      p.direction.isShort ? '売り (ショート)' : '買い (ロング)';
+
+  /// 1 件送る。届かなくても売買には関わらないので、記録に残すだけにする。
+  Future<void> send(String title, String message, {String? tag}) async {
+    try {
+      final body = utf8.encode(
+        jsonEncode({
+          'topic': topic,
+          'title': title,
+          'message': message,
+          if (tag != null) 'tags': [tag],
+        }),
+      );
+      final request = await _http.postUrl(Uri.parse(server));
+      request.headers.contentType = ContentType.json;
+      request.contentLength = body.length;
+      request.add(body);
+      final response = await request.close();
+      await response.drain<void>();
+      if (response.statusCode >= 300) {
+        _log('通知を送れませんでした (HTTP ${response.statusCode})');
+      }
+    } catch (e) {
+      _log('通知を送れませんでした: $e');
+    }
+  }
+
+  void close() => _http.close(force: true);
 }

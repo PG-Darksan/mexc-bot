@@ -95,6 +95,7 @@ class BotSnapshot {
     this.exchangePositions,
     this.exchangeClosed,
     this.contractSizes = const {},
+    this.pushTopic,
   });
 
   final bool running;
@@ -130,6 +131,9 @@ class BotSnapshot {
   /// [exchangePositions] の銘柄の 1 枚あたりの数量。評価損益の計算に使う。
   final Map<String, double> contractSizes;
 
+  /// サーバーがスマホへ通知を送る ntfy の購読名。送っていなければ null。
+  final String? pushTopic;
+
   static BotSnapshot initial(StrategyConfig config) => BotSnapshot(
     running: false,
     config: config,
@@ -160,6 +164,7 @@ class BotSnapshot {
     'exchangePositions': exchangePositions?.map((e) => e.toJson()).toList(),
     'exchangeClosed': exchangeClosed?.map((e) => e.toJson()).toList(),
     'contractSizes': contractSizes,
+    'pushTopic': pushTopic,
   };
 
   factory BotSnapshot.fromJson(Map<String, dynamic> json) => BotSnapshot(
@@ -204,6 +209,7 @@ class BotSnapshot {
     contractSizes: ((json['contractSizes'] as Map?) ?? const {}).map(
       (k, v) => MapEntry('$k', (v as num).toDouble()),
     ),
+    pushTopic: json['pushTopic'] as String?,
   );
 
   static List<PositionInfo>? _positionList(Object? raw) => raw is List

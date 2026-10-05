@@ -409,7 +409,7 @@ class BotEngine {
     );
 
     if (!_rest.hasCredentials) {
-      _log(BotEvent.warning('APIキーが未設定のため発注できません。'));
+      _log(BotEvent.warning('APIキーが未設定のため発注出来ません。'));
       return;
     }
 
@@ -500,7 +500,7 @@ class BotEngine {
       // 送り直すと指値が 2 本になるので、送り直さずに知らせる。
       _log(BotEvent.warning(
         '買い足しの指値が通ったかどうか分かりません (${e.message})。'
-        'MEXC の未約定注文を確かめてください。',
+        'MEXC の未約定注文を確かめて下さい。',
       ));
     } on MexcApiException catch (e) {
       _log(BotEvent.warning('買い足しの指値を置けませんでした: ${e.description}'));
@@ -558,12 +558,12 @@ class BotEngine {
       if (mode != _config.positionModeValue) {
         _log(BotEvent.warning(
           '口座が「ヘッジモード」になっています。このボットは一方向モードで動くので、'
-          'MEXC 側を一方向に切り替えてください '
-          '(建玉・未約定注文・プラン注文をすべて無くしてから変更できます)。',
+          'MEXC 側を一方向に切り替えて下さい '
+          '(建玉・未約定注文・プラン注文を全て無くしてから変更出来ます)。',
         ));
       }
     } catch (e) {
-      _log(BotEvent.warning('建玉モードを確認できません: $e'));
+      _log(BotEvent.warning('建玉モードを確認出来ません: $e'));
     }
   }
 
@@ -851,7 +851,7 @@ class BotEngine {
     final contract = _feed.contractOf(position.symbol);
     final ticker = _feed.tickerOf(position.symbol);
     if (contract == null || ticker == null) {
-      _log(BotEvent.warning('${position.symbol}: 相場データが無く決済できません'));
+      _log(BotEvent.warning('${position.symbol}: 相場データが無く決済出来ません'));
       return;
     }
     // 先に買い足しの指値を消す。決済のあとに約定すると建玉が復活してしまう。

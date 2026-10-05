@@ -220,42 +220,42 @@ class SideConfig {
       errors.add('$name: 時間軸が 1 つも選ばれていません。');
     }
     if (minAmount24Usdt < 0) {
-      errors.add('$name: 24h出来高の下限は 0 以上にしてください。');
+      errors.add('$name: 24h出来高の下限は 0 以上にして下さい。');
     }
-    if (bbPeriod < 2) errors.add('$name: BB期間は 2 以上にしてください。');
-    if (rsiPeriod < 2) errors.add('$name: RSI期間は 2 以上にしてください。');
-    if (emaPeriod < 1) errors.add('$name: EMA期間は 1 以上にしてください。');
+    if (bbPeriod < 2) errors.add('$name: BB期間は 2 以上にして下さい。');
+    if (rsiPeriod < 2) errors.add('$name: RSI期間は 2 以上にして下さい。');
+    if (emaPeriod < 1) errors.add('$name: EMA期間は 1 以上にして下さい。');
     if (historyBars < requiredBars) {
-      errors.add('$name: 保持する足が少なすぎます。$requiredBars 本以上にしてください。');
+      errors.add('$name: 保持する足が少な過ぎます。$requiredBars 本以上にして下さい。');
     }
-    if (bbSigma <= 0) errors.add('$name: σ倍率は 0 より大きい値にしてください。');
+    if (bbSigma <= 0) errors.add('$name: σ倍率は 0 より大きい値にして下さい。');
     if (rsiThreshold <= 0 || rsiThreshold > 100) {
-      errors.add('$name: RSIしきい値は 0 より大きく 100 以下にしてください。');
+      errors.add('$name: RSI閾値は 0 より大きく 100 以下にして下さい。');
     }
-    if (leverage < 1) errors.add('$name: レバレッジは 1 以上にしてください。');
+    if (leverage < 1) errors.add('$name: レバレッジは 1 以上にして下さい。');
     if (marginPerTradeUsdt <= 0) {
-      errors.add('$name: 1回あたりの証拠金は 0 より大きい値にしてください。');
+      errors.add('$name: 1回あたりの証拠金は 0 より大きい値にして下さい。');
     }
     if (takeProfitFactor <= 0 || takeProfitFactor >= 1) {
-      errors.add('$name: 利確係数は 0 より大きく 1 未満にしてください。');
+      errors.add('$name: 利確係数は 0 より大きく 1 未満にして下さい。');
     }
     if (bandBreakoutEntryEnabled && bandBreakoutPercent <= 0) {
-      errors.add('$name: 行きすぎの基準 (σ のバンドから離れた割合) は 0 より大きい値にしてください。');
+      errors.add('$name: 行き過ぎの基準 (σ のバンドから離れた割合) は 0 より大きい値にして下さい。');
     }
     if (direction.isLong &&
         bandBreakoutEntryEnabled &&
         bandBreakoutPercent >= 100) {
-      errors.add('$name: 行きすぎの基準 (σ のバンドから離れた割合) は 100% 未満にしてください。');
+      errors.add('$name: 行き過ぎの基準 (σ のバンドから離れた割合) は 100% 未満にして下さい。');
     }
     if (addOnEnabled) {
       if (addOnLossPercent <= 0) {
-        errors.add('$name: 買い足しを入れる含み損は 0 より大きい値にしてください。');
+        errors.add('$name: 買い足しを入れる含み損は 0 より大きい値にして下さい。');
       }
       if (direction.isLong && addOnLossPercent / leverage >= 100) {
-        errors.add('$name: 買い足しの含み損 ÷ レバレッジ は 100% 未満にしてください。');
+        errors.add('$name: 買い足しの含み損 ÷ レバレッジ は 100% 未満にして下さい。');
       }
       if (addOnBudgetPercent <= 0 || addOnBudgetPercent > 100) {
-        errors.add('$name: 買い足しに使う残り資金の割合は 0 より大きく 100 以下にしてください。');
+        errors.add('$name: 買い足しに使う残り資金の割合は 0 より大きく 100 以下にして下さい。');
       }
     }
     return errors;
@@ -485,10 +485,10 @@ class StrategyConfig {
   List<String> validate() {
     final errors = <String>[];
     if (evaluationIntervalSeconds < 5) {
-      errors.add('判定間隔は 5 秒以上にしてください。');
+      errors.add('判定間隔は 5 秒以上にして下さい。');
     }
     if (!short.enabled && !long.enabled) {
-      errors.add('ショートとロングの両方が切られています。少なくとも片方を入れてください。');
+      errors.add('ショートとロングの両方が切られています。少なくとも片方を入れて下さい。');
     }
     errors.addAll(short.validate());
     errors.addAll(long.validate());
