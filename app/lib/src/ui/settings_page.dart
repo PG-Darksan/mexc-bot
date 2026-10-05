@@ -95,7 +95,7 @@ class _SettingsPageState extends State<SettingsPage> {
       bandBreakoutEntryEnabled: from.bandBreakoutEntryEnabled,
       bandBreakoutPercent: from.bandBreakoutPercent,
       maxFundingBurdenPercent: from.maxFundingBurdenPercent,
-      minFundingIntervalHours: from.minFundingIntervalHours,
+      fundingWindowHours: from.fundingWindowHours,
       addOnEnabled: from.addOnEnabled,
       addOnLossPercent: from.addOnLossPercent,
       addOnBudgetPercent: from.addOnBudgetPercent,
@@ -334,15 +334,18 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                       ),
                       _SharedField(
-                        title: '資金調達: 間隔の下限',
-                        suffix: '時間',
+                        title: '資金調達: 支払いまでの残り時間',
+                        suffix: '時間以内',
                         integer: true,
-                        value: shared.minFundingIntervalHours.toDouble(),
+                        value: shared.fundingWindowHours.toDouble(),
                         onChanged: (v) => _updateBoth(
-                          (x) => x.copyWith(minFundingIntervalHours: v.toInt()),
+                          (x) => x.copyWith(fundingWindowHours: v.toInt()),
                         ),
                       ),
-                      const _Hint('この 2 つは、資金調達を支払う側の時だけ効きます。'),
+                      const _Hint(
+                        '資金調達を支払う側で、負担率が上限を超え、かつ次の支払いまで'
+                        'この時間以内の時だけ見送ります。',
+                      ),
                       _CompactSwitch(
                         label: '含み損が出たら買い足し / 売り足しする',
                         value: shared.addOnEnabled,

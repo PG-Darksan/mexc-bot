@@ -433,8 +433,8 @@ class _SideConditions extends StatelessWidget {
               ),
             _Condition(
               '資金調達',
-              '負担 ${side.maxFundingBurdenPercent}% 超 / '
-                  '間隔 ${side.minFundingIntervalHours}h 未満は除外',
+              '負担 ${side.maxFundingBurdenPercent}% 超かつ'
+                  ' 支払いまで ${side.fundingWindowHours} 時間以内なら見送り',
             ),
             if (side.bandBreakoutEntryEnabled)
               _Condition(
