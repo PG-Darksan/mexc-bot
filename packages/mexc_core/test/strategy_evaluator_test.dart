@@ -69,11 +69,15 @@ void main() {
   FundingInfo funding({
     required double rate,
     required int cycle,
+    double? settleInHours,
   }) => FundingInfo(
     symbol: symbol,
     fundingRate: rate,
     collectCycleHours: cycle,
-    nextSettleTime: 0,
+    nextSettleTime: settleInHours == null
+        ? 0
+        : DateTime.now().millisecondsSinceEpoch +
+              (settleInHours * 3600000).round(),
     fetchedAt: DateTime.now(),
   );
 
@@ -247,10 +251,10 @@ void main() {
       expect(result.rejectReason, RejectReason.rsiNotReached);
     });
 
-    test('ロングが支払う側 (率がプラス) で負担が大きければ見送る', () {
+    test('ロングが支払う側 (率がプラス) で負担が大きく、支払いが近ければ見送る', () {
       final result = run(
         direction: TradeDirection.long,
-        fundingInfo: funding(rate: 0.002, cycle: 8),
+        fundingInfo: funding(rate: 0.002, cycle: 8, settleInHours: 1),
       );
       expect(result.rejectReason, RejectReason.fundingRateTooHigh);
     });
@@ -360,14 +364,32 @@ void main() {
   });
 
   group('資金調達率フィルタ', () {
-    test('ショートが支払う側で 0.1% を超えたら見送る', () {
-      final result = run(fundingInfo: funding(rate: -0.002, cycle: 8));
+    test('支払う側で負担率が上限を超え、支払いまで 2 時間以内なら見送る', () {
+      final result = run(
+        fundingInfo: funding(rate: -0.002, cycle: 8, settleInHours: 1.5),
+      );
       expect(result.rejectReason, RejectReason.fundingRateTooHigh);
     });
 
-    test('ショートが支払う側で調達間隔が 2時間未満なら見送る', () {
-      final result = run(fundingInfo: funding(rate: -0.0005, cycle: 1));
-      expect(result.rejectReason, RejectReason.fundingIntervalTooShort);
+    test('負担率が上限を超えても、支払いがまだ先なら入る', () {
+      final result = run(
+        fundingInfo: funding(rate: -0.002, cycle: 8, settleInHours: 5),
+      );
+      expect(result.isTriggered, isTrue, reason: '却下: ${result.rejectReason}');
+    });
+
+    test('負担率が上限以内なら、支払いが近くても入る', () {
+      final result = run(
+        fundingInfo: funding(rate: -0.0005, cycle: 1, settleInHours: 0.2),
+      );
+      expect(result.isTriggered, isTrue, reason: '却下: ${result.rejectReason}');
+    });
+
+    test('精算の時刻が分からなければ、間隔の区切り (UTC) で求める', () {
+      final info = funding(rate: -0.002, cycle: 8);
+      // 07:30 UTC なら、次の精算は 08:00 UTC。
+      final now = DateTime.utc(2026, 10, 5, 7, 30);
+      expect(info.hoursUntilSettle(now), closeTo(0.5, 1e-9));
     });
 
     test('ショートが受け取る側なら率が大きくても通す', () {
@@ -599,7 +621,7 @@ void main() {
       expect(config.short.leverage, 1);
       expect(config.short.takeProfitFactor, 0.5);
       expect(config.short.maxFundingBurdenPercent, 0.1);
-      expect(config.short.minFundingIntervalHours, 2);
+      expect(config.short.fundingWindowHours, 2);
       expect(config.timeframes, [
         Timeframe.m15,
         Timeframe.h1,
@@ -621,7 +643,7 @@ void main() {
       expect(l.takeProfitFactor, s.takeProfitFactor);
       expect(l.minTakeProfitPercent, s.minTakeProfitPercent);
       expect(l.maxFundingBurdenPercent, s.maxFundingBurdenPercent);
-      expect(l.minFundingIntervalHours, s.minFundingIntervalHours);
+      expect(l.fundingWindowHours, s.fundingWindowHours);
       expect(l.minAmount24Usdt, s.minAmount24Usdt);
       expect(l.timeframes, s.timeframes);
       expect(l.bbPeriod, s.bbPeriod);
@@ -810,5 +832,56 @@ void main() {
       long: const SideConfig.long().copyWith(minAmount24Usdt: 10000000),
     );
     expect(config.minAmount24Usdt, 1000000);
+  });
+
+  group('建てられる上限', () {
+    ContractInfo contract({double maxVol = 1000, double riskBaseVol = 300}) =>
+        ContractInfo(
+          symbol: 'TAKE_USDT',
+          baseCoin: 'TAKE',
+          quoteCoin: 'USDT',
+          settleCoin: 'USDT',
+          contractSize: 10,
+          minVol: 1,
+          maxVol: maxVol,
+          volUnit: 1,
+          volScale: 0,
+          priceUnit: 0.00001,
+          priceScale: 5,
+          minLeverage: 1,
+          maxLeverage: 50,
+          positionOpenType: 3,
+          apiAllowed: true,
+          state: 0,
+          takerFeeRate: 0.0002,
+          makerFeeRate: 0,
+          futureType: 1,
+          riskBaseVol: riskBaseVol,
+          riskIncrVol: 50,
+          riskLevelLimit: 3,
+        );
+
+    test('持てる建玉の上限は、段階の数だけ足した枚数', () {
+      expect(contract().maxPositionVol, 400);
+    });
+
+    test('証拠金が上限を超えていれば、持てる最大の枚数にする', () {
+      // 1000 USDT ÷ (0.2 USDT × 10) = 500 枚 → 上限の 400 枚。
+      final vol = contract().volumeForMargin(
+        marginUsdt: 1000,
+        leverage: 1,
+        price: 0.2,
+      );
+      expect(vol, 400);
+    });
+
+    test('1 回の注文の上限の方が小さければ、そちらに合わせる', () {
+      final vol = contract(maxVol: 250).volumeForMargin(
+        marginUsdt: 1000,
+        leverage: 1,
+        price: 0.2,
+      );
+      expect(vol, 250);
+    });
   });
 }

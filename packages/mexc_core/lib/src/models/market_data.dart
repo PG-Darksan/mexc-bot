@@ -88,6 +88,20 @@ class FundingInfo {
   final int nextSettleTime;
   final DateTime fetchedAt;
 
+  /// 次に資金調達を精算するまでの時間 (時間単位)。
+  ///
+  /// 精算の時刻が取れていない (または過ぎている) ときは、調達間隔の区切り
+  /// (UTC の 0 時から間隔ごと) で精算されるものとして求める。
+  double hoursUntilSettle(DateTime now) {
+    final nowMs = now.millisecondsSinceEpoch;
+    var next = nextSettleTime;
+    if (next <= nowMs) {
+      final cycleMs = (collectCycleHours < 1 ? 1 : collectCycleHours) * 3600000;
+      next = (nowMs ~/ cycleMs + 1) * cycleMs;
+    }
+    return (next - nowMs) / 3600000;
+  }
+
   /// 指定方向の建玉が資金調達を「支払う」側かどうか。
   ///
   /// fundingRate が正ならロングが払い、負ならショートが払う。

@@ -62,7 +62,7 @@ class SideConfig {
     this.takeProfitFactor = 0.5,
     this.minTakeProfitPercent = 0.3,
     this.maxFundingBurdenPercent = 0.1,
-    this.minFundingIntervalHours = 2,
+    this.fundingWindowHours = 2,
     this.bandBreakoutEntryEnabled = true,
     this.bandBreakoutPercent = 20.0,
     this.addOnEnabled = false,
@@ -135,8 +135,9 @@ class SideConfig {
   /// 資金調達を「支払う側」のとき、この%を超えていたら見送る。
   final double maxFundingBurdenPercent;
 
-  /// 資金調達を「支払う側」のとき、調達間隔がこの時間未満なら見送る。
-  final int minFundingIntervalHours;
+  /// 資金調達を支払う側で、負担率が上限を超え、かつ次の支払いまでが
+  /// この時間以内なら見送る。まだ先なら、支払いの前に利確できる見込みがある。
+  final int fundingWindowHours;
 
   /// バンドから大きく離れたら、RSI を見ずに逆張りで入るか。
   ///
@@ -204,7 +205,7 @@ class SideConfig {
     takeProfitFactor: takeProfitFactor,
     minTakeProfitPercent: minTakeProfitPercent,
     maxFundingBurdenPercent: maxFundingBurdenPercent,
-    minFundingIntervalHours: minFundingIntervalHours,
+    fundingWindowHours: fundingWindowHours,
     bandBreakoutEntryEnabled: bandBreakoutEntryEnabled,
     bandBreakoutPercent: bandBreakoutPercent,
     addOnEnabled: addOnEnabled,
@@ -276,7 +277,7 @@ class SideConfig {
     double? takeProfitFactor,
     double? minTakeProfitPercent,
     double? maxFundingBurdenPercent,
-    int? minFundingIntervalHours,
+    int? fundingWindowHours,
     bool? bandBreakoutEntryEnabled,
     double? bandBreakoutPercent,
     bool? addOnEnabled,
@@ -299,8 +300,8 @@ class SideConfig {
     minTakeProfitPercent: minTakeProfitPercent ?? this.minTakeProfitPercent,
     maxFundingBurdenPercent:
         maxFundingBurdenPercent ?? this.maxFundingBurdenPercent,
-    minFundingIntervalHours:
-        minFundingIntervalHours ?? this.minFundingIntervalHours,
+    fundingWindowHours:
+        fundingWindowHours ?? this.fundingWindowHours,
     bandBreakoutEntryEnabled:
         bandBreakoutEntryEnabled ?? this.bandBreakoutEntryEnabled,
     bandBreakoutPercent: bandBreakoutPercent ?? this.bandBreakoutPercent,
@@ -325,7 +326,7 @@ class SideConfig {
     'takeProfitFactor': takeProfitFactor,
     'minTakeProfitPercent': minTakeProfitPercent,
     'maxFundingBurdenPercent': maxFundingBurdenPercent,
-    'minFundingIntervalHours': minFundingIntervalHours,
+    'fundingWindowHours': fundingWindowHours,
     'bandBreakoutEntryEnabled': bandBreakoutEntryEnabled,
     'bandBreakoutPercent': bandBreakoutPercent,
     'addOnEnabled': addOnEnabled,
@@ -370,8 +371,11 @@ class SideConfig {
         // 旧形式 (ショートだけの頃) のキーも拾う。
         d('maxShortBurdenPercent', fallback.maxFundingBurdenPercent),
       ),
-      minFundingIntervalHours:
-          i('minFundingIntervalHours', fallback.minFundingIntervalHours),
+      // 以前は「調達間隔の下限」(minFundingIntervalHours) だった。
+      fundingWindowHours: i(
+        'fundingWindowHours',
+        i('minFundingIntervalHours', fallback.fundingWindowHours),
+      ),
       bandBreakoutEntryEnabled:
           b('bandBreakoutEntryEnabled', fallback.bandBreakoutEntryEnabled),
       bandBreakoutPercent:

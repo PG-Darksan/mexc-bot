@@ -418,6 +418,7 @@ class BotEngine {
         evaluation: evaluation,
         contract: contract,
         config: _config,
+        availableUsdt: _asset?.availableBalance,
       );
       _positions[position.id] = position;
       // 取引所の一覧に載るまでの間も、同じ銘柄へ重ねて出さないようにする。

@@ -10,7 +10,7 @@ enum RejectReason {
   lowVolume('24h出来高が不足'),
   rsiNotReached('RSIが閾値に届かない'),
   insideBand('バンド内'),
-  fundingRateTooHigh('資金調達率の負担が大きい'),
+  fundingRateTooHigh('資金調達の負担が大きく、支払いが近い'),
   fundingIntervalTooShort('資金調達の間隔が短い'),
   fundingUnknown('資金調達率が未取得'),
   alreadyHolding('同じ銘柄を保有中'),

@@ -35,6 +35,7 @@ class StrategyEvaluator {
     required ContractInfo contract,
     TickerSnapshot? ticker,
     FundingInfo? funding,
+    DateTime? now,
   }) {
     final side = config.sideOf(direction);
     final closes = series.closes;
@@ -172,13 +173,14 @@ class StrategyEvaluator {
     if (funding == null) {
       return reject(RejectReason.fundingUnknown);
     }
+    // 負担率が上限を超え、かつ次の支払いまでが指定時間以内なら見送る。
+    // 支払いがまだ先なら、その前に利確できる見込みがあるので入る。
     if (funding.paysFor(direction)) {
       final burdenPercent = funding.burdenRateFor(direction) * 100;
-      if (burdenPercent > side.maxFundingBurdenPercent) {
+      if (burdenPercent > side.maxFundingBurdenPercent &&
+          funding.hoursUntilSettle(now ?? DateTime.now()) <=
+              side.fundingWindowHours) {
         return reject(RejectReason.fundingRateTooHigh);
-      }
-      if (funding.collectCycleHours < side.minFundingIntervalHours) {
-        return reject(RejectReason.fundingIntervalTooShort);
       }
     }
 

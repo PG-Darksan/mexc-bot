@@ -30,6 +30,7 @@ class AddOnPlan {
     required ContractInfo contract,
     required double entryPrice,
     required double availableUsdt,
+    double heldVol = 0,
   }) {
     if (!side.addOnEnabled || availableUsdt <= 0) return null;
     final raw = side.addOnPriceFor(entryPrice);
@@ -43,7 +44,11 @@ class AddOnPlan {
       price: price,
     );
     if (vol == null) return null;
-    return AddOnPlan(price: price, vol: vol, marginUsdt: margin);
+    // 今の建玉と合わせて、持てる建玉の上限を超えない分だけにする。
+    final room = contract.roundVolume(contract.maxPositionVol - heldVol);
+    final capped = vol > room ? room : vol;
+    if (capped < contract.minVol) return null;
+    return AddOnPlan(price: price, vol: capped, marginUsdt: margin);
   }
 }
 
@@ -74,6 +79,7 @@ class TradeExecutor {
     required SignalEvaluation evaluation,
     required ContractInfo contract,
     required StrategyConfig config,
+    double? availableUsdt,
   }) async {
     final direction = evaluation.direction;
     final side = config.sideOf(direction);
@@ -83,15 +89,34 @@ class TradeExecutor {
     // 成行で出す。約定しやすい側へ刻みを丸める。
     final entryPrice = contract.roundPrice(markPrice, roundUp: !isShort);
 
+    // 設定の証拠金が残高を超えていれば、残高で建てられる分にする
+    // (手数料の分だけ余らせる)。
+    var margin = side.marginPerTradeUsdt;
+    if (availableUsdt != null && availableUsdt > 0) {
+      final usable = availableUsdt * 0.99;
+      if (usable < margin) {
+        onLog?.call(
+          '${contract.symbol}: 証拠金を残高に合わせて '
+          '${usable.toStringAsFixed(2)} USDT に減らします',
+        );
+        margin = usable;
+      }
+    }
     final vol = contract.volumeForMargin(
-      marginUsdt: side.marginPerTradeUsdt,
+      marginUsdt: margin,
       leverage: side.leverage.toDouble(),
       price: entryPrice,
     );
     if (vol == null) {
       throw StateError(
-        '${contract.symbol}: 証拠金 ${side.marginPerTradeUsdt} USDT では'
+        '${contract.symbol}: 証拠金 ${margin.toStringAsFixed(2)} USDT では'
         '最小数量 (${contract.minVol} 枚) に届きません。',
+      );
+    }
+    final wanted = margin * side.leverage / (entryPrice * contract.contractSize);
+    if (vol < contract.roundVolume(wanted)) {
+      onLog?.call(
+        '${contract.symbol}: 持てる上限に合わせて ${vol.toStringAsFixed(contract.volScale)} 枚で建てます',
       );
     }
 
@@ -174,6 +199,7 @@ class TradeExecutor {
       contract: contract,
       entryPrice: position.entryPrice,
       availableUsdt: availableUsdt,
+      heldVol: position.vol,
     );
     if (plan == null) {
       throw StateError(

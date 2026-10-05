@@ -23,6 +23,9 @@ class ContractInfo {
     required this.takerFeeRate,
     required this.makerFeeRate,
     required this.futureType,
+    this.riskBaseVol = 0,
+    this.riskIncrVol = 0,
+    this.riskLevelLimit = 1,
   });
 
   final String symbol;
@@ -35,6 +38,18 @@ class ContractInfo {
 
   final double minVol;
   final double maxVol;
+
+  /// 建玉の上限 (段階ごと)。最初の段階の枚数と、段階ごとに増える枚数、段階の数。
+  final double riskBaseVol;
+  final double riskIncrVol;
+  final int riskLevelLimit;
+
+  /// この銘柄で持てる建玉の最大枚数。分からなければ 1 回の注文の上限。
+  double get maxPositionVol {
+    if (riskBaseVol <= 0) return maxVol;
+    final levels = riskLevelLimit < 1 ? 0 : riskLevelLimit - 1;
+    return riskBaseVol + riskIncrVol * levels;
+  }
 
   /// 注文数量の刻み (枚)。
   final double volUnit;
@@ -102,7 +117,9 @@ class ContractInfo {
     final raw = notional / (price * contractSize);
     final vol = roundVolume(raw);
     if (vol < minVol) return null;
-    if (vol > maxVol) return maxVol;
+    // 1 回の注文の上限と、持てる建玉の上限を超えた分は削る。
+    final cap = roundVolume(maxPositionVol < maxVol ? maxPositionVol : maxVol);
+    if (vol > cap) return cap;
     return vol;
   }
 
@@ -132,6 +149,9 @@ class ContractInfo {
       takerFeeRate: d('takerFeeRate'),
       makerFeeRate: d('makerFeeRate'),
       futureType: i('futureType', 1),
+      riskBaseVol: d('riskBaseVol'),
+      riskIncrVol: d('riskIncrVol'),
+      riskLevelLimit: i('riskLevelLimit', 1),
     );
   }
 }
