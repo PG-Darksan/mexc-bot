@@ -14,6 +14,7 @@ enum RejectReason {
   fundingIntervalTooShort('資金調達の間隔が短い'),
   fundingUnknown('資金調達率が未取得'),
   alreadyHolding('同じ銘柄を保有中'),
+  maxPositions('同時に持つ数が上限'),
   cooldown('クールダウン中'),
   profitTooSmall('利確幅が小さ過ぎる'),
   volumeTooSmall('発注数量が最小未満'),
@@ -42,6 +43,7 @@ class SignalEvaluation {
     required this.bandDeviation,
     this.byBandBreakout = false,
     required this.takeProfitPrice,
+    this.stopLossPrice,
     required this.expectedProfitPercent,
     required this.fundingRate,
     required this.fundingIntervalHours,
@@ -78,6 +80,9 @@ class SignalEvaluation {
 
   final double? takeProfitPrice;
 
+  /// 発注と同時に置く損切り。σ の倍数で決めるときだけ入る。
+  final double? stopLossPrice;
+
   /// エントリー価格に対する利確幅 (%)。方向に関わらず正の値。
   final double? expectedProfitPercent;
 
@@ -111,6 +116,7 @@ class SignalEvaluation {
     bandDeviation: bandDeviation,
     byBandBreakout: byBandBreakout,
     takeProfitPrice: takeProfitPrice,
+    stopLossPrice: stopLossPrice,
     expectedProfitPercent: expectedProfitPercent,
     fundingRate: fundingRate,
     fundingIntervalHours: fundingIntervalHours,
@@ -133,6 +139,7 @@ class SignalEvaluation {
     'bandDeviation': bandDeviation,
     'byBandBreakout': byBandBreakout,
     'takeProfitPrice': takeProfitPrice,
+    'stopLossPrice': stopLossPrice,
     'expectedProfitPercent': expectedProfitPercent,
     'fundingRate': fundingRate,
     'fundingIntervalHours': fundingIntervalHours,
@@ -158,6 +165,7 @@ class SignalEvaluation {
         bandDeviation: (json['bandDeviation'] as num?)?.toDouble(),
         byBandBreakout: json['byBandBreakout'] as bool? ?? false,
         takeProfitPrice: (json['takeProfitPrice'] as num?)?.toDouble(),
+        stopLossPrice: (json['stopLossPrice'] as num?)?.toDouble(),
         expectedProfitPercent:
             (json['expectedProfitPercent'] as num?)?.toDouble(),
         fundingRate: (json['fundingRate'] as num?)?.toDouble(),
@@ -200,6 +208,7 @@ class ManagedPosition {
     this.addOnPrice,
     this.addOnVol,
     this.addOnFilled = false,
+    this.maxHoldMinutes,
   });
 
   /// externalOid と同じ値。取引所側と突き合わせるのに使う。
@@ -245,6 +254,14 @@ class ManagedPosition {
 
   /// 買い足しが約定して、[vol] と [entryPrice] が平均後の値になっているか。
   final bool addOnFilled;
+
+  /// 建ててからこの分数が過ぎたら成行で決済する。null なら時間では決済しない。
+  final int? maxHoldMinutes;
+
+  /// 時間で決済する期限。無ければ null。
+  DateTime? get closeDeadline => maxHoldMinutes == null
+      ? null
+      : openedAt.add(Duration(minutes: maxHoldMinutes!));
 
   /// 買い足しの指値がまだ取引所に残っているか。
   bool get hasPendingAddOn => addOnOrderId != null && !addOnFilled;
@@ -308,6 +325,7 @@ class ManagedPosition {
     addOnPrice: clearAddOn ? null : (addOnPrice ?? this.addOnPrice),
     addOnVol: clearAddOn ? null : (addOnVol ?? this.addOnVol),
     addOnFilled: clearAddOn ? false : (addOnFilled ?? this.addOnFilled),
+    maxHoldMinutes: maxHoldMinutes,
   );
 
   Map<String, dynamic> toJson() => {
@@ -335,6 +353,7 @@ class ManagedPosition {
     'addOnPrice': addOnPrice,
     'addOnVol': addOnVol,
     'addOnFilled': addOnFilled,
+    'maxHoldMinutes': maxHoldMinutes,
   };
 
   factory ManagedPosition.fromJson(Map<String, dynamic> json) =>
@@ -371,6 +390,7 @@ class ManagedPosition {
         addOnPrice: (json['addOnPrice'] as num?)?.toDouble(),
         addOnVol: (json['addOnVol'] as num?)?.toDouble(),
         addOnFilled: json['addOnFilled'] as bool? ?? false,
+        maxHoldMinutes: (json['maxHoldMinutes'] as num?)?.toInt(),
       );
 }
 

@@ -884,4 +884,163 @@ void main() {
       expect(vol, 250);
     });
   });
+
+  group('σ の倍数で決める利確・損切り', () {
+    StrategyConfig sigmaConfig({double tp = 3, double sl = 3}) =>
+        const StrategyConfig().copyWith(
+          short: const SideConfig.short().copyWith(
+            exitMode: ExitMode.sigma,
+            takeProfitSigma: tp,
+            stopLossSigma: sl,
+          ),
+          long: const SideConfig.long().copyWith(
+            exitMode: ExitMode.sigma,
+            takeProfitSigma: tp,
+            stopLossSigma: sl,
+          ),
+        );
+
+    test('ロングは入値 + 3σ で利確、入値 - 3σ で損切り', () {
+      final closes = spikeSeries(spike: 0.5);
+      final result = run(
+        config: sigmaConfig(),
+        direction: TradeDirection.long,
+        closes: closes,
+      );
+      expect(result.rejectReason, isNull, reason: '却下: ${result.rejectReason}');
+      final sd = Indicators.bollinger(closes, 20, 4)!.deviation;
+      expect(result.takeProfitPrice, closeTo(result.price + 3 * sd, 1e-9));
+      expect(result.stopLossPrice, closeTo(result.price - 3 * sd, 1e-9));
+    });
+
+    test('ショートは入値 - σ で利確、入値 + σ で損切り', () {
+      final closes = spikeSeries(spike: 1.5);
+      final result = run(config: sigmaConfig(tp: 1, sl: 2), closes: closes);
+      expect(result.rejectReason, isNull, reason: '却下: ${result.rejectReason}');
+      final sd = Indicators.bollinger(closes, 20, 4)!.deviation;
+      expect(result.takeProfitPrice, closeTo(result.price - sd, 1e-9));
+      expect(result.stopLossPrice, closeTo(result.price + 2 * sd, 1e-9));
+    });
+
+    test('損切りの σ が 0 なら損切りは置かない', () {
+      final result = run(config: sigmaConfig(sl: 0));
+      expect(result.isTriggered, isTrue);
+      expect(result.stopLossPrice, isNull);
+    });
+
+    test('ロングで損切りが 0 以下になる所なら損切りは置かない', () {
+      final result = run(
+        config: sigmaConfig(sl: 1000),
+        direction: TradeDirection.long,
+      );
+      expect(result.isTriggered, isTrue);
+      expect(result.stopLossPrice, isNull);
+    });
+
+    test('今までの決め方では損切りは付かない', () {
+      final result = run();
+      expect(result.isTriggered, isTrue);
+      expect(result.stopLossPrice, isNull);
+    });
+
+    test('評価結果の損切りは JSON と往復できる', () {
+      final result = run(config: sigmaConfig());
+      final restored = SignalEvaluation.fromJson(result.toJson());
+      expect(restored.stopLossPrice, result.stopLossPrice);
+    });
+
+    test('設定は JSON と往復でき、無い古い保存データは今までの決め方で読む', () {
+      final config = sigmaConfig(tp: 2.5, sl: 1.5).copyWith(
+        long: sigmaConfig().long.copyWith(maxHoldHours: 6),
+      );
+      final restored = StrategyConfig.fromJson(
+        config.copyWith(maxOpenPositions: 7).toJson(),
+      );
+      expect(restored.maxOpenPositions, 7);
+      expect(restored.short.exitMode, ExitMode.sigma);
+      expect(restored.short.takeProfitSigma, 2.5);
+      expect(restored.short.stopLossSigma, 1.5);
+      expect(restored.long.maxHoldHours, 6);
+
+      final old = const StrategyConfig().toJson();
+      (old['short'] as Map).remove('exitMode');
+      (old['long'] as Map).remove('exitMode');
+      final legacy = StrategyConfig.fromJson(old);
+      expect(legacy.short.exitMode, ExitMode.emaRatio);
+      expect(legacy.long.maxHoldHours, 0);
+      expect(legacy.maxOpenPositions, 0);
+    });
+
+    test('おかしな値は弾く', () {
+      final bad = const SideConfig.long().copyWith(
+        exitMode: ExitMode.sigma,
+        takeProfitSigma: 0,
+        stopLossSigma: -1,
+        maxHoldHours: -1,
+      );
+      expect(bad.validate(), hasLength(3));
+      expect(
+        const StrategyConfig(maxOpenPositions: -1).validate(),
+        contains(contains('同時に持つ建玉の上限')),
+      );
+    });
+
+    test('検証済みの設定はロングだけ・15 分足・-4σ・RSI 5 以下・同時 10 件まで', () {
+      final before = const StrategyConfig().copyWith(
+        long: const SideConfig.long().copyWith(
+          marginPerTradeUsdt: 25,
+          leverage: 2,
+        ),
+      );
+      final preset = before.withVerifiedPreset();
+      expect(preset.validate(), isEmpty);
+      expect(preset.short.enabled, isFalse);
+      expect(preset.long.enabled, isTrue);
+      expect(preset.long.timeframes, [Timeframe.m15]);
+      expect(preset.maxOpenPositions, 10);
+      expect(preset.long.bbSigma, 4);
+      expect(preset.long.rsiThreshold, 5);
+      expect(preset.long.exitMode, ExitMode.sigma);
+      expect(preset.long.takeProfitSigma, 3);
+      expect(preset.long.stopLossSigma, 3);
+      expect(preset.long.maxHoldHours, 12);
+      expect(preset.long.bandBreakoutEntryEnabled, isFalse);
+      // 証拠金とレバレッジは残す。
+      expect(preset.long.marginPerTradeUsdt, 25);
+      expect(preset.long.leverage, 2);
+    });
+
+    test('建玉の記録は最長保有時間を持って往復でき、期限が出せる', () {
+      final opened = DateTime(2026, 1, 1, 9);
+      final position = ManagedPosition(
+        id: 'p',
+        symbol: symbol,
+        timeframe: Timeframe.m15,
+        direction: TradeDirection.long,
+        openedAt: opened,
+        entryPrice: 100,
+        vol: 1,
+        contractSize: 1,
+        leverage: 1,
+        emaAtSignal: 0,
+        deviationAtSignal: 0,
+        takeProfitPrice: 106,
+        stopLossPrice: 94,
+        status: ManagedPositionStatus.open,
+        maxHoldMinutes: 720,
+      );
+      final restored = ManagedPosition.fromJson(position.toJson());
+      expect(restored.maxHoldMinutes, 720);
+      expect(restored.closeDeadline, DateTime(2026, 1, 1, 21));
+      // 利確を動かしても期限は残る。
+      expect(restored.copyWith(takeProfitPrice: 110).maxHoldMinutes, 720);
+      // 期限の無い建玉。
+      expect(
+        ManagedPosition.fromJson(
+          (position.toJson())..remove('maxHoldMinutes'),
+        ).closeDeadline,
+        isNull,
+      );
+    });
+  });
 }

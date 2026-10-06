@@ -99,8 +99,22 @@ class _SettingsPageState extends State<SettingsPage> {
       addOnEnabled: from.addOnEnabled,
       addOnLossPercent: from.addOnLossPercent,
       addOnBudgetPercent: from.addOnBudgetPercent,
+      exitMode: from.exitMode,
+      takeProfitSigma: from.takeProfitSigma,
+      stopLossSigma: from.stopLossSigma,
+      maxHoldHours: from.maxHoldHours,
     );
     return c.withSide(shared(c.short)).withSide(shared(c.long));
+  }
+
+  /// 検証済みの設定を下書きに入れる。保存するまでは反映しない。
+  void _applyVerifiedPreset() {
+    setState(() => _draft = _normalize(draft.withVerifiedPreset()));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('検証済みの設定を入れました。「保存して反映」を押すとボットに反映されます。'),
+      ),
+    );
   }
 
   /// 保存する画面設定を組む。
@@ -206,6 +220,34 @@ class _SettingsPageState extends State<SettingsPage> {
               _Frame(
                 groups: [
                   _Group(
+                    title: '検証済みの設定',
+                    description:
+                        '1 年分の検証で、前半・後半とも黒字だった設定です '
+                        '(research/strategy_search_report.md)。',
+                    children: [
+                      const _Hint(
+                        'ロングだけ。15 分足で -4σ に触れ、RSI(7) が 5 以下なら買います。'
+                        '利確は入値 +3σ、損切りは入値 -3σ、12 時間で決まらなければ'
+                        '成行で閉じます。同時に持つのは 10 件までです。'
+                        '証拠金とレバレッジは今の値のままです。'
+                        'ショートは切ります (12 時間以内に閉じる条件では、黒字になる'
+                        '組み合わせがありませんでした)。',
+                      ),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: FilledButton.tonalIcon(
+                          onPressed: _applyVerifiedPreset,
+                          icon: const Icon(Icons.auto_fix_high, size: 16),
+                          label: const Text(
+                            'この設定を入れる',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  _Group(
                     title: 'ショートとロングの条件',
                     description:
                         '向きで分けるのは、建てるか・出来高の下限・RSI の閾値だけです。'
@@ -284,15 +326,60 @@ class _SettingsPageState extends State<SettingsPage> {
                           (x) => x.copyWith(marginPerTradeUsdt: v),
                         ),
                       ),
+                      _CompactSwitch(
+                        label: '利確・損切りを σ の倍数で決める',
+                        value: shared.exitMode == ExitMode.sigma,
+                        onChanged: (v) => _updateBoth(
+                          (x) => x.copyWith(
+                            exitMode: v ? ExitMode.sigma : ExitMode.emaRatio,
+                          ),
+                        ),
+                      ),
+                      if (shared.exitMode == ExitMode.sigma) ...[
+                        _SharedField(
+                          title: '利確 (入値から)',
+                          suffix: 'σ',
+                          value: shared.takeProfitSigma,
+                          onChanged: (v) =>
+                              _updateBoth((x) => x.copyWith(takeProfitSigma: v)),
+                        ),
+                        _SharedField(
+                          title: '損切り (入値から)',
+                          suffix: 'σ',
+                          value: shared.stopLossSigma,
+                          onChanged: (v) =>
+                              _updateBoth((x) => x.copyWith(stopLossSigma: v)),
+                        ),
+                        const _Hint(
+                          'σ は検知した瞬間の BB(20) の 1σ の幅です。ロングなら入値 + 利確 σ'
+                          ' で利確、入値 - 損切り σ で損切りします (ショートは逆)。'
+                          '損切りを 0 にすると置きません。どちらも発注と同時に取引所へ預けます。',
+                        ),
+                      ] else ...[
+                        _SharedField(
+                          title: '利確の係数',
+                          value: shared.takeProfitFactor,
+                          onChanged: (v) => _updateBoth(
+                            (x) => x.copyWith(takeProfitFactor: v),
+                          ),
+                        ),
+                        const _Hint(
+                          '行き過ぎた分の内、この割合だけ戻った所で利確します'
+                          ' (0.5 なら半分)。0 より大きく 1 未満。損切りは置きません。',
+                        ),
+                      ],
                       _SharedField(
-                        title: '利確の係数',
-                        value: shared.takeProfitFactor,
-                        onChanged: (v) =>
-                            _updateBoth((x) => x.copyWith(takeProfitFactor: v)),
+                        title: '最長保有時間',
+                        suffix: '時間',
+                        integer: true,
+                        value: shared.maxHoldHours.toDouble(),
+                        onChanged: (v) => _updateBoth(
+                          (x) => x.copyWith(maxHoldHours: v.toInt()),
+                        ),
                       ),
                       const _Hint(
-                        '行き過ぎた分の内、この割合だけ戻った所で利確します'
-                        ' (0.5 なら半分)。0 より大きく 1 未満。',
+                        '建ててからこの時間が過ぎたら成行で決済します。0 なら時間では'
+                        '決済しません。ボットを止めている間は閉じません。',
                       ),
                       _SharedField(
                         title: '利確幅の下限',
@@ -415,13 +502,22 @@ class _SettingsPageState extends State<SettingsPage> {
                           ),
                         ],
                       ),
+                      _SharedField(
+                        title: '同時に持つ建玉の上限',
+                        suffix: '件',
+                        integer: true,
+                        value: draft.maxOpenPositions.toDouble(),
+                        onChanged: (v) => _update(
+                          (c) => c.copyWith(maxOpenPositions: v.toInt()),
+                        ),
+                      ),
                       const _Hint(
-                        '同時に持てる件数に上限はありません。'
+                        '0 なら上限なし。手で建てたものも数えます。'
                         'ポジションを持っている銘柄は、持っている間は 1 回だけ発火します'
                         ' (重ねて建てません)。決済後は「再エントリー待ち」を過ぎれば、'
                         '同じ足でももう一度入ります。\n'
-                        '新規建ては成行・分離マージンで、利確は発注と同時に取引所へ'
-                        '預けます。資金調達率の絞り込みは常に効きます。',
+                        '新規建ては成行・分離マージンで、利確 (と損切り) は発注と同時に'
+                        '取引所へ預けます。資金調達率の絞り込みは常に効きます。',
                       ),
                     ],
                   ),

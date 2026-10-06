@@ -98,4 +98,32 @@ void main() {
     expect(c.short.minAmount24Usdt, 1000000);
     expect(c.long.minAmount24Usdt, 10000000);
   });
+
+  testWidgets('検証済みの設定を入れて保存すると、σ の決済でロングだけになる', (tester) async {
+    final state = await _pumpSettings(tester);
+    // 入れる前は今までの決め方なので、σ の欄は出ていない。
+    expect(find.text('利確 (入値から)'), findsNothing);
+
+    await tester.tap(find.text('この設定を入れる'));
+    await tester.pumpAndSettle();
+    expect(find.text('利確 (入値から)'), findsOneWidget);
+    // 保存するまではボットの設定は変わらない。
+    expect(state.config.long.exitMode, ExitMode.emaRatio);
+
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    await _save(tester);
+
+    final c = state.config;
+    expect(c.short.enabled, isFalse);
+    expect(c.long.enabled, isTrue);
+    expect(c.long.timeframes, [Timeframe.m15]);
+    expect(c.maxOpenPositions, 10);
+    expect(c.long.bbSigma, 4);
+    expect(c.long.rsiThreshold, 5);
+    expect(c.long.exitMode, ExitMode.sigma);
+    expect(c.long.takeProfitSigma, 3);
+    expect(c.long.stopLossSigma, 3);
+    expect(c.long.maxHoldHours, 12);
+  });
 }

@@ -51,6 +51,7 @@ class StrategyEvaluator {
       double? bandDeviation,
       bool byBandBreakout = false,
       double? takeProfit,
+      double? stopLoss,
       double? profitPercent,
       double price = 0,
     }) => SignalEvaluation(
@@ -68,6 +69,7 @@ class StrategyEvaluator {
       bandDeviation: bandDeviation,
       byBandBreakout: byBandBreakout,
       takeProfitPrice: takeProfit,
+      stopLossPrice: stopLoss,
       expectedProfitPercent: profitPercent,
       fundingRate: funding?.fundingRate,
       fundingIntervalHours: funding?.collectCycleHours,
@@ -110,12 +112,29 @@ class StrategyEvaluator {
 
     final deviation = (ema != null && ema > 0) ? (price - ema) / ema : null;
 
-    // 利確の基準は入り方で変える。
-    // * 行きすぎで入ったとき … バンドまでの戻りを基準にする。
-    // * 通常 … 検知した瞬間の EMA までの戻りを基準にする。
-    // どちらも「乖離率 × 係数」だけ戻した位置に置く。
+    // 利確の基準は決め方と入り方で変える。
+    // * σ の倍数 … 入値から σ × 倍率だけ戻した所。損切りも σ × 倍率だけ外へ置く。
+    // * EMA の戻り (今まで) … 行きすぎで入ったときはバンドまで、通常は検知した
+    //   瞬間の EMA までの戻りを基準に、「乖離率 × 係数」だけ戻した位置に置く。
     double? takeProfit;
-    if (farBeyondBand) {
+    double? stopLoss;
+    final bySigma = side.exitMode == ExitMode.sigma;
+    if (bySigma) {
+      final sd = bb?.deviation;
+      if (sd != null && sd > 0) {
+        final tp = direction.isShort
+            ? price - side.takeProfitSigma * sd
+            : price + side.takeProfitSigma * sd;
+        if (tp > 0) takeProfit = tp;
+        if (side.stopLossSigma > 0) {
+          final sl = direction.isShort
+              ? price + side.stopLossSigma * sd
+              : price - side.stopLossSigma * sd;
+          // ロングで σ が大き過ぎて 0 以下になるときは置けない。
+          if (sl > 0) stopLoss = sl;
+        }
+      }
+    } else if (farBeyondBand) {
       takeProfit = boundary! *
           (1 +
               (direction.isShort ? bandDeviation : -bandDeviation) *
@@ -140,6 +159,7 @@ class StrategyEvaluator {
       bandDeviation: bandDeviation,
       byBandBreakout: farBeyondBand,
       takeProfit: takeProfit,
+      stopLoss: stopLoss,
       profitPercent: profitPercent,
       price: price,
     );
@@ -187,9 +207,9 @@ class StrategyEvaluator {
     if (takeProfit == null) {
       return reject(RejectReason.profitTooSmall);
     }
-    // 通常の入り方では、乖離の向きが方向と合っていないと
-    // 利確目標が逆側に出てしまう。行きすぎで入るときはバンド基準なので要らない。
-    if (!farBeyondBand) {
+    // EMA の戻りで決める通常の入り方では、乖離の向きが方向と合っていないと
+    // 利確目標が逆側に出てしまう。行きすぎ (バンド基準) と σ の倍数では要らない。
+    if (!farBeyondBand && !bySigma) {
       final deviationOk = deviation != null &&
           (direction.isShort ? deviation > 0 : deviation < 0);
       if (!deviationOk) {
@@ -208,6 +228,7 @@ class StrategyEvaluator {
       bandDeviation: bandDeviation,
       byBandBreakout: farBeyondBand,
       takeProfit: takeProfit,
+      stopLoss: stopLoss,
       profitPercent: profitPercent,
       price: price,
     );

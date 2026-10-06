@@ -38,6 +38,24 @@ enum TradeDirection {
       positionType == 1 ? TradeDirection.long : TradeDirection.short;
 }
 
+/// 利確 (と損切り) の決め方。
+enum ExitMode {
+  /// 検知した瞬間の EMA からの乖離に係数を掛けた分だけ戻した所で利確する。
+  /// 損切りは置かない (今までの方法)。
+  emaRatio('EMA の戻り'),
+
+  /// 入値から BB の σ の倍数だけ離した所に利確と損切りを置く。
+  /// σ は検知した瞬間の BB(20) の標準偏差。
+  sigma('σ の倍数');
+
+  const ExitMode(this.label);
+
+  final String label;
+
+  static ExitMode fromName(String? name) => ExitMode.values
+      .firstWhere((e) => e.name == name, orElse: () => ExitMode.emaRatio);
+}
+
 /// 片方向ぶんの売買条件。
 ///
 /// ショートとロングで同じ項目を持ち、既定値も揃えてある。
@@ -68,6 +86,10 @@ class SideConfig {
     this.addOnEnabled = false,
     this.addOnLossPercent = 10.0,
     this.addOnBudgetPercent = 100.0,
+    this.exitMode = ExitMode.emaRatio,
+    this.takeProfitSigma = 3.0,
+    this.stopLossSigma = 3.0,
+    this.maxHoldHours = 0,
   });
 
   /// ショートの既定値 (利用者の指定どおりの条件)。
@@ -168,6 +190,19 @@ class SideConfig {
   /// 100% にすると次の銘柄の新規建てに回す資金が無くなる。
   final double addOnBudgetPercent;
 
+  // ── 利確・損切りの決め方 ─────────────────────────────────────
+  /// 利確 (と損切り) の決め方。既定は今までどおりの [ExitMode.emaRatio]。
+  final ExitMode exitMode;
+
+  /// [ExitMode.sigma] のとき、入値から利確までの距離 (σ の何倍か)。
+  final double takeProfitSigma;
+
+  /// [ExitMode.sigma] のとき、入値から損切りまでの距離 (σ の何倍か)。0 なら置かない。
+  final double stopLossSigma;
+
+  /// 建ててからこの時間が過ぎたら成行で決済する。0 なら時間では決済しない。
+  final int maxHoldHours;
+
   /// 買い足しの指値を置く価格。建値からの値動きは 含み損% ÷ レバレッジ。
   double addOnPriceFor(double entryPrice) {
     final move = addOnLossPercent / 100 / leverage;
@@ -211,6 +246,10 @@ class SideConfig {
     addOnEnabled: addOnEnabled,
     addOnLossPercent: addOnLossPercent,
     addOnBudgetPercent: addOnBudgetPercent,
+    exitMode: exitMode,
+    takeProfitSigma: takeProfitSigma,
+    stopLossSigma: stopLossSigma,
+    maxHoldHours: maxHoldHours,
   );
 
   /// この方向の設定に問題があれば日本語で返す。
@@ -259,6 +298,17 @@ class SideConfig {
         errors.add('$name: 買い足しに使う残り資金の割合は 0 より大きく 100 以下にして下さい。');
       }
     }
+    if (exitMode == ExitMode.sigma) {
+      if (takeProfitSigma <= 0) {
+        errors.add('$name: 利確までの σ は 0 より大きい値にして下さい。');
+      }
+      if (stopLossSigma < 0) {
+        errors.add('$name: 損切りまでの σ は 0 以上にして下さい (0 で置かない)。');
+      }
+    }
+    if (maxHoldHours < 0) {
+      errors.add('$name: 最長保有時間は 0 以上にして下さい (0 で時間では決済しない)。');
+    }
     return errors;
   }
 
@@ -283,6 +333,10 @@ class SideConfig {
     bool? addOnEnabled,
     double? addOnLossPercent,
     double? addOnBudgetPercent,
+    ExitMode? exitMode,
+    double? takeProfitSigma,
+    double? stopLossSigma,
+    int? maxHoldHours,
   }) => SideConfig(
     direction: direction,
     enabled: enabled ?? this.enabled,
@@ -308,6 +362,10 @@ class SideConfig {
     addOnEnabled: addOnEnabled ?? this.addOnEnabled,
     addOnLossPercent: addOnLossPercent ?? this.addOnLossPercent,
     addOnBudgetPercent: addOnBudgetPercent ?? this.addOnBudgetPercent,
+    exitMode: exitMode ?? this.exitMode,
+    takeProfitSigma: takeProfitSigma ?? this.takeProfitSigma,
+    stopLossSigma: stopLossSigma ?? this.stopLossSigma,
+    maxHoldHours: maxHoldHours ?? this.maxHoldHours,
   );
 
   Map<String, dynamic> toJson() => {
@@ -332,6 +390,10 @@ class SideConfig {
     'addOnEnabled': addOnEnabled,
     'addOnLossPercent': addOnLossPercent,
     'addOnBudgetPercent': addOnBudgetPercent,
+    'exitMode': exitMode.name,
+    'takeProfitSigma': takeProfitSigma,
+    'stopLossSigma': stopLossSigma,
+    'maxHoldHours': maxHoldHours,
   };
 
   factory SideConfig.fromJson(
@@ -383,6 +445,13 @@ class SideConfig {
       addOnEnabled: b('addOnEnabled', fallback.addOnEnabled),
       addOnLossPercent: d('addOnLossPercent', fallback.addOnLossPercent),
       addOnBudgetPercent: d('addOnBudgetPercent', fallback.addOnBudgetPercent),
+      // 無い保存データ (σ の決済が入る前のもの) は今までどおりの決め方で読む。
+      exitMode: json.containsKey('exitMode')
+          ? ExitMode.fromName(json['exitMode'] as String?)
+          : fallback.exitMode,
+      takeProfitSigma: d('takeProfitSigma', fallback.takeProfitSigma),
+      stopLossSigma: d('stopLossSigma', fallback.stopLossSigma),
+      maxHoldHours: i('maxHoldHours', fallback.maxHoldHours),
     );
   }
 }
@@ -399,6 +468,7 @@ class StrategyConfig {
     this.long = const SideConfig.long(),
     this.evaluationIntervalSeconds = 60,
     this.reentryCooldownMinutes = 60,
+    this.maxOpenPositions = 0,
   });
 
   // ── 方向ごとの条件 ──────────────────────────────────────────
@@ -411,6 +481,12 @@ class StrategyConfig {
 
   /// 決済後、同じ銘柄に再エントリーするまでの待ち時間 (分)。
   final int reentryCooldownMinutes;
+
+  /// 同時に持つ建玉の上限 (手で建てたものも数える)。0 なら上限なし。
+  ///
+  /// 相場全体が急落すると、多くの銘柄が同時に条件を満たす。上限が無いと
+  /// その全部を一度に買ってしまうので、資金に合わせて抑える。
+  final int maxOpenPositions;
 
   /// 発注と同時に利確 (takeProfitPrice) を取引所へ預ける。常に行う。
   ///
@@ -494,6 +570,9 @@ class StrategyConfig {
     if (!short.enabled && !long.enabled) {
       errors.add('ショートとロングの両方が切られています。少なくとも片方を入れて下さい。');
     }
+    if (maxOpenPositions < 0) {
+      errors.add('同時に持つ建玉の上限は 0 以上にして下さい (0 で上限なし)。');
+    }
     errors.addAll(short.validate());
     errors.addAll(long.validate());
     return errors;
@@ -504,6 +583,7 @@ class StrategyConfig {
     SideConfig? long,
     int? evaluationIntervalSeconds,
     int? reentryCooldownMinutes,
+    int? maxOpenPositions,
   }) => StrategyConfig(
     short: short ?? this.short,
     long: long ?? this.long,
@@ -511,6 +591,7 @@ class StrategyConfig {
         evaluationIntervalSeconds ?? this.evaluationIntervalSeconds,
     reentryCooldownMinutes:
         reentryCooldownMinutes ?? this.reentryCooldownMinutes,
+    maxOpenPositions: maxOpenPositions ?? this.maxOpenPositions,
   );
 
   /// 片方向ぶんだけ差し替える。
@@ -518,11 +599,40 @@ class StrategyConfig {
       ? copyWith(short: side)
       : copyWith(long: side);
 
+  /// 1 年分の検証で、前半・後半とも黒字だった設定に入れ替える
+  /// (research/strategy_search_report.md)。
+  ///
+  /// ロングだけ。15 分足で -4σ に触れ、RSI(7) が 5 以下なら買う。
+  /// 利確は入値 +3σ、損切りは入値 -3σ、12 時間で決済されなければ成行で閉じる。
+  /// 相場全体の急落で一度に多くの銘柄を買わないよう、同時に持つのは 10 件まで。
+  /// 証拠金とレバレッジは今の値を残す。ショートは切る (12 時間以内に
+  /// 閉じる条件では、黒字になる組み合わせが無かった)。
+  StrategyConfig withVerifiedPreset() {
+    SideConfig apply(SideConfig s) => s.copyWith(
+      minAmount24Usdt: 1000000,
+      timeframes: const [Timeframe.m15],
+      bbSigma: 4.0,
+      exitMode: ExitMode.sigma,
+      takeProfitSigma: 3.0,
+      stopLossSigma: 3.0,
+      maxHoldHours: 12,
+      bandBreakoutEntryEnabled: false,
+      addOnEnabled: false,
+    );
+    return copyWith(
+      short: apply(short).copyWith(enabled: false),
+      long: apply(long).copyWith(enabled: true, rsiThreshold: 5.0),
+      reentryCooldownMinutes: 60,
+      maxOpenPositions: 10,
+    );
+  }
+
   Map<String, dynamic> toJson() => {
     'short': short.toJson(),
     'long': long.toJson(),
     'evaluationIntervalSeconds': evaluationIntervalSeconds,
     'reentryCooldownMinutes': reentryCooldownMinutes,
+    'maxOpenPositions': maxOpenPositions,
   };
 
   factory StrategyConfig.fromJson(Map<String, dynamic> json) {
@@ -565,6 +675,7 @@ class StrategyConfig {
           i('evaluationIntervalSeconds', fallback.evaluationIntervalSeconds),
       reentryCooldownMinutes:
           i('reentryCooldownMinutes', fallback.reentryCooldownMinutes),
+      maxOpenPositions: i('maxOpenPositions', fallback.maxOpenPositions),
     );
   }
 }

@@ -127,6 +127,12 @@ class TradeExecutor {
       evaluation.takeProfitPrice!,
       roundUp: isShort,
     );
+    // 損切りは σ の倍数で決めるときだけ付く。建値に近い側へ丸める
+    // (ショートは切り下げ / ロングは切り上げ。チャートから置き直すときと同じ)。
+    final stopLossRaw = evaluation.stopLossPrice;
+    final stopLoss = stopLossRaw == null
+        ? null
+        : contract.roundPrice(stopLossRaw, roundUp: !isShort);
     final id = _newExternalOid();
     final position = ManagedPosition(
       id: id,
@@ -141,7 +147,9 @@ class TradeExecutor {
       emaAtSignal: evaluation.ema ?? 0,
       deviationAtSignal: evaluation.deviation ?? 0,
       takeProfitPrice: takeProfit,
+      stopLossPrice: stopLoss,
       status: ManagedPositionStatus.open,
+      maxHoldMinutes: side.maxHoldHours > 0 ? side.maxHoldHours * 60 : null,
     );
 
     // 建玉が無い状態では positionId ではなく
@@ -166,8 +174,9 @@ class TradeExecutor {
       type: config.orderTypeValue,
       openType: config.openType,
       leverage: side.leverage,
-      // 利確は必ず発注と同時に取引所へ預ける。落ちていても決済される。
+      // 利確 (と損切り) は必ず発注と同時に取引所へ預ける。落ちていても決済される。
       takeProfitPrice: takeProfit,
+      stopLossPrice: stopLoss,
       positionMode: config.positionModeValue,
       externalOid: id,
     );
@@ -176,7 +185,10 @@ class TradeExecutor {
       '${contract.symbol} ${evaluation.timeframe.label} '
       '${direction.label}発注 '
       '${vol.toStringAsFixed(contract.volScale)} 枚 @ $entryPrice '
-      '→ 利確 $takeProfit (注文ID ${result.orderId})',
+      '→ 利確 $takeProfit'
+      '${stopLoss == null ? "" : " / 損切り $stopLoss"}'
+      '${side.maxHoldHours > 0 ? " / 最長 ${side.maxHoldHours} 時間" : ""}'
+      ' (注文ID ${result.orderId})',
     );
 
     return position.copyWith(exchangeOrderId: result.orderId);

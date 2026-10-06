@@ -92,6 +92,12 @@ class BotEngine {
   /// 管理外の建玉について、すでに知らせた銘柄。同じ警告を毎分出さないため。
   final Set<String> _warnedForeignSymbols = {};
 
+  /// 時間切れの決済に失敗した建玉と、次に試してよい時刻。毎分同じ失敗を出さないため。
+  final Map<String, DateTime> _expiryRetryAt = {};
+
+  /// 時間切れの決済に失敗したとき、次に試すまでの間隔。
+  static const Duration expiryRetryInterval = Duration(minutes: 5);
+
   List<String> _watchlist = const [];
   List<SignalEvaluation> _lastEvaluations = const [];
   AccountAsset? _asset;
@@ -278,6 +284,9 @@ class BotEngine {
       // 決済済みの建玉もここで拾う。
       await _syncExchangeState();
 
+      // 最長保有時間を過ぎた建玉を成行で閉じる。
+      await _closeExpiredPositions();
+
       final evaluations = _evaluateAll();
       _lastEvaluations = evaluations
           .where((e) => e.rejectReason != RejectReason.insufficientData)
@@ -357,6 +366,8 @@ class BotEngine {
       // すでに建玉がある銘柄には、向きが同じでも違っても新規は出さない。
       // 出すのは利確 (決済) だけ。
       reason = RejectReason.alreadyHolding;
+    } else if (atPositionLimit) {
+      reason = RejectReason.maxPositions;
     } else {
       final until = _cooldownUntil[evaluation.symbol];
       if (until != null && DateTime.now().isBefore(until)) {
@@ -377,13 +388,25 @@ class BotEngine {
       _heldSymbols.contains(symbol) ||
       _positions.values.any((p) => p.symbol == symbol);
 
+  /// 同時に持つ建玉の上限 ([StrategyConfig.maxOpenPositions]) に達しているか。
+  ///
+  /// 取引所にある建玉 (手で建てたもの・発注直後でまだ載っていないものも) を
+  /// 銘柄の数で数える。
+  bool get atPositionLimit {
+    final limit = _config.maxOpenPositions;
+    if (limit <= 0) return false;
+    final held = {..._heldSymbols, ..._positions.values.map((p) => p.symbol)};
+    return held.length >= limit;
+  }
+
   Future<void> _handleSignal(SignalEvaluation evaluation) async {
     final contract = _feed.contractOf(evaluation.symbol);
     if (contract == null) return;
 
     // 同じサイクルで別の時間軸や反対方向が先に建てている場合があるので、
-    // 発注の直前にもう一度見る。
+    // 発注の直前にもう一度見る。上限も同じサイクルの発注で埋まることがある。
     if (isHolding(evaluation.symbol)) return;
+    if (atPositionLimit) return;
 
     final side = _config.sideOf(evaluation.direction);
     final isShort = evaluation.direction.isShort;
@@ -402,7 +425,8 @@ class BotEngine {
         '${evaluation.direction.label}シグナル検知 '
         '価格 ${evaluation.price} / $detail / '
         '利確 '
-        '${evaluation.takeProfitPrice?.toStringAsFixed(contract.priceScale) ?? "-"}',
+        '${evaluation.takeProfitPrice?.toStringAsFixed(contract.priceScale) ?? "-"}'
+        '${evaluation.stopLossPrice == null ? "" : " / 損切り ${evaluation.stopLossPrice!.toStringAsFixed(contract.priceScale)}"}',
         symbol: evaluation.symbol,
         data: evaluation.toJson(),
       ),
@@ -688,6 +712,54 @@ class BotEngine {
       _log(BotEvent.warning('口座情報の同期に失敗: ${e.description}'));
     } catch (e) {
       _log(BotEvent.warning('口座情報の同期に失敗: $e'));
+    }
+  }
+
+  /// 最長保有時間 ([SideConfig.maxHoldHours]) を過ぎた建玉を成行で閉じる。
+  ///
+  /// 利確・損切りは取引所に預けてあるが、時間での決済は取引所に預けられない
+  /// ので、ボットが判定サイクルごとに見て出す。止めている間は閉じない。
+  Future<void> _closeExpiredPositions() async {
+    if (!_rest.hasCredentials) return;
+    final now = DateTime.now();
+    _expiryRetryAt.removeWhere((id, _) => !_positions.containsKey(id));
+    for (final position in _positions.values.toList()) {
+      final deadline = position.closeDeadline;
+      if (deadline == null || now.isBefore(deadline)) continue;
+      final retryAt = _expiryRetryAt[position.id];
+      if (retryAt != null && now.isBefore(retryAt)) continue;
+      final contract = _feed.contractOf(position.symbol);
+      final ticker = _feed.tickerOf(position.symbol);
+      if (contract == null || ticker == null) continue;
+      final hours = (position.maxHoldMinutes! / 60).toStringAsFixed(0);
+      // 先に買い足しの指値を消す。決済のあとに約定すると建玉が復活してしまう。
+      await _cancelAddOnOrder(position);
+      try {
+        final closed = await _executor.close(
+          position: position,
+          contract: contract,
+          config: _config,
+          markPrice: ticker.lastPrice,
+          note: '最長保有 ($hours 時間) で決済',
+        );
+        _finishPosition(closed);
+        _heldSymbols = {..._heldSymbols}..remove(position.symbol);
+        _expiryRetryAt.remove(position.id);
+      } on MexcApiException catch (e) {
+        _expiryRetryAt[position.id] = now.add(expiryRetryInterval);
+        _log(BotEvent.error(
+          '${position.symbol}: 最長保有時間を過ぎましたが決済出来ませんでした '
+          '(${e.description})。${expiryRetryInterval.inMinutes} 分後にもう一度試します。',
+          symbol: position.symbol,
+        ));
+      } catch (e) {
+        _expiryRetryAt[position.id] = now.add(expiryRetryInterval);
+        _log(BotEvent.error(
+          '${position.symbol}: 最長保有時間を過ぎましたが決済出来ませんでした ($e)。'
+          '${expiryRetryInterval.inMinutes} 分後にもう一度試します。',
+          symbol: position.symbol,
+        ));
+      }
     }
   }
 
