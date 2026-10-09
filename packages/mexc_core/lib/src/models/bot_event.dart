@@ -1,5 +1,6 @@
 import 'package:meta/meta.dart';
 
+import 'manual_order.dart';
 import 'position.dart';
 import 'signal.dart';
 import 'strategy_config.dart';
@@ -96,6 +97,8 @@ class BotSnapshot {
     this.exchangeClosed,
     this.contractSizes = const {},
     this.pushTopic,
+    this.openOrders,
+    this.pendingExits = const [],
   });
 
   final bool running;
@@ -134,6 +137,15 @@ class BotSnapshot {
   /// サーバーがスマホへ通知を送る ntfy の購読名。送っていなければ null。
   final String? pushTopic;
 
+  /// 取引所に出ている (まだ約定していない) 指値と条件付き注文。ボットの
+  /// 買い足しも、アプリから手で出したものも入る。まだ取っていなければ
+  /// (古いサーバーなど) null。
+  final List<ExchangeOrder>? openOrders;
+
+  /// 条件付き注文に付けた利確 / 損切りの予約。発動して建玉ができたら
+  /// サーバーが置く。
+  final List<PendingExit> pendingExits;
+
   static BotSnapshot initial(StrategyConfig config) => BotSnapshot(
     running: false,
     config: config,
@@ -165,6 +177,8 @@ class BotSnapshot {
     'exchangeClosed': exchangeClosed?.map((e) => e.toJson()).toList(),
     'contractSizes': contractSizes,
     'pushTopic': pushTopic,
+    'openOrders': openOrders?.map((e) => e.toJson()).toList(),
+    'pendingExits': pendingExits.map((e) => e.toJson()).toList(),
   };
 
   factory BotSnapshot.fromJson(Map<String, dynamic> json) => BotSnapshot(
@@ -210,6 +224,16 @@ class BotSnapshot {
       (k, v) => MapEntry('$k', (v as num).toDouble()),
     ),
     pushTopic: json['pushTopic'] as String?,
+    openOrders: json['openOrders'] is List
+        ? (json['openOrders'] as List)
+              .whereType<Map>()
+              .map((e) => ExchangeOrder.fromJson(e.cast<String, dynamic>()))
+              .toList()
+        : null,
+    pendingExits: ((json['pendingExits'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => PendingExit.fromJson(e.cast<String, dynamic>()))
+        .toList(),
   );
 
   static List<PositionInfo>? _positionList(Object? raw) => raw is List

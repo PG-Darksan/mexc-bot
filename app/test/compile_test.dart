@@ -10,11 +10,13 @@ import 'package:mexc_bot_app/src/app.dart';
 import 'package:mexc_bot_app/src/ui/chart_page.dart';
 import 'package:mexc_bot_app/src/ui/dashboard_page.dart';
 import 'package:mexc_bot_app/src/ui/home_page.dart';
+import 'package:mexc_bot_app/src/ui/lock_screen.dart';
 import 'package:mexc_bot_app/src/ui/log_page.dart';
 import 'package:mexc_bot_app/src/ui/market_page.dart';
 import 'package:mexc_bot_app/src/ui/orders_page.dart';
 import 'package:mexc_bot_app/src/ui/price_chart.dart';
 import 'package:mexc_bot_app/src/ui/settings_page.dart';
+import 'package:mexc_bot_app/src/ui/trade_page.dart';
 
 void main() {
   test('画面のウィジェットを組み立てられる', () {
@@ -31,8 +33,11 @@ void main() {
       RunningStatusSection(),
       TradeConditionsSection(),
       PriceChart(candles: [], bbPeriod: 20, bbSigma: 4, emaPeriod: 5),
+      TradePage(symbol: 'BTC_USDT'),
+      LockScreen(),
+      LockButton(),
     ];
-    expect(widgets, hasLength(11));
+    expect(widgets, hasLength(14));
   });
 
   test('MexcBotApp の型が揃っている', () {

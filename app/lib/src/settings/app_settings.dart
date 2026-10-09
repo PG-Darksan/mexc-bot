@@ -11,10 +11,17 @@ class AppSettings {
     this.themeMode = AppThemeMode.system,
     this.chartSigmas = defaultChartSigmas,
     this.chartEmas = defaultChartEmas,
+    this.chartBars = defaultChartBars,
   });
 
   static const List<double> defaultChartSigmas = [2, 3, 4];
   static const List<int> defaultChartEmas = [50, 100, 150];
+
+  /// ホームのチャートに描く本数の既定。
+  static const int defaultChartBars = 200;
+
+  /// 描く本数として選べるもの。
+  static const List<int> chartBarChoices = [30, 60, 100, 150, 200, 300, 500];
 
   final String serverUrl;
   final String serverToken;
@@ -29,18 +36,23 @@ class AppSettings {
   /// チャートに足して描く EMA の期間。利確に使う EMA は別に必ず描く。
   final List<int> chartEmas;
 
+  /// ホームのチャートに描く本数 (直近の何本を描くか)。
+  final int chartBars;
+
   AppSettings copyWith({
     String? serverUrl,
     String? serverToken,
     AppThemeMode? themeMode,
     List<double>? chartSigmas,
     List<int>? chartEmas,
+    int? chartBars,
   }) => AppSettings(
     serverUrl: serverUrl ?? this.serverUrl,
     serverToken: serverToken ?? this.serverToken,
     themeMode: themeMode ?? this.themeMode,
     chartSigmas: chartSigmas ?? this.chartSigmas,
     chartEmas: chartEmas ?? this.chartEmas,
+    chartBars: chartBars ?? this.chartBars,
   );
 
   Map<String, dynamic> toJson() => {
@@ -49,6 +61,7 @@ class AppSettings {
     'themeMode': themeMode.name,
     'chartBands': chartSigmas,
     'chartEmas': chartEmas,
+    'chartBars': chartBars,
   };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) => AppSettings(
@@ -65,6 +78,8 @@ class AppSettings {
             .map((v) => v.toInt())
             .toList() ??
         defaultChartEmas,
+    chartBars: ((json['chartBars'] as num?)?.toInt() ?? defaultChartBars)
+        .clamp(10, 2000),
   );
 }
 

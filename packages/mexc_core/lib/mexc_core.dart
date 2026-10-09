@@ -21,6 +21,7 @@ export 'src/indicators/indicators.dart';
 export 'src/models/bot_event.dart';
 export 'src/models/candle.dart';
 export 'src/models/contract_info.dart';
+export 'src/models/manual_order.dart';
 export 'src/models/market_data.dart';
 export 'src/models/position.dart';
 export 'src/models/signal.dart';

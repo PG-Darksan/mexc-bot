@@ -5,6 +5,7 @@ import '../app.dart';
 import '../settings/app_settings.dart';
 import '../state/app_state.dart';
 import 'chart_page.dart';
+import 'lock_screen.dart';
 import 'market_page.dart';
 import 'orders_page.dart';
 import 'settings_page.dart';
@@ -170,7 +171,7 @@ class _TopBar extends StatelessWidget implements PreferredSizeWidget {
     // 動かし方や接続の状態はホームの「稼働状況」に出す。ここには置かない。
     return AppBar(
       title: const Text('MEXC 自動売買', overflow: TextOverflow.ellipsis),
-      actions: [brightnessButton, startButton],
+      actions: [const LockButton(), brightnessButton, startButton],
     );
   }
 }
@@ -201,8 +202,12 @@ class _NoticeBarState extends State<_NoticeBar> {
         'サーバーに取引所の API キーが入っていません。注文は出ません '
             '(サーバーの /etc/mexc-bot/env に入れて下さい)。',
       if (state.connection == ControllerConnection.error)
-        'サーバーに繋がりません。設定タブのURLと接続トークン、'
-            'サーバーが動いているかを確認して下さい。',
+        isTailscaleServerUrl(state.settings.serverUrl)
+            ? 'サーバーに繋がりません。まず、この端末の Tailscale がオンになって'
+                'いるか確かめて下さい (スマホは Tailscale アプリを開いてオンに)。'
+                'それでもだめなら、設定タブのURLと接続トークンを確かめて下さい。'
+            : 'サーバーに繋がりません。設定タブのURLと接続トークン、'
+                'サーバーが動いているかを確認して下さい。',
     ];
     // 出ていない知らせは覚えておく必要がない。ここで落としても、
     // いま画面に出すものは変わらない (伏せる対象が減るだけ)。

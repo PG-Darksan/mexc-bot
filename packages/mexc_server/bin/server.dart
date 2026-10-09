@@ -62,6 +62,15 @@ Future<void> main(List<String> args) async {
     apiSecret: apiSecret,
   );
   engine.restorePositions(savedPositions);
+  // 条件付き注文に付けた利確 / 損切りの予約。発動したらサーバーが置く。
+  engine.restorePendingExits(await store.loadPendingExits());
+  engine.onPendingExitsChanged = (exits) {
+    unawaited(
+      store.savePendingExits(exits).catchError((Object e) {
+        _log('利確 / 損切りの予約を保存出来ませんでした: $e');
+      }),
+    );
+  };
 
   // アプリを閉じていてもスマホに届くよう、通知はサーバーから ntfy で送る。
   final topic = Platform.environment['NTFY_TOPIC']?.trim() ?? '';
@@ -367,6 +376,35 @@ class BotServer {
                 (message.payload['stopLossPrice'] as num?)?.toDouble(),
             clearStopLoss: message.payload['clearStopLoss'] as bool? ?? false,
           );
+        case ClientCommandType.placeOrder:
+          final request = ManualOrderRequest.fromJson(message.payload);
+          final text = await engine.placeManualOrder(request);
+          client.send(
+            WireMessage(
+              type: ServerMessageType.ack,
+              id: message.id,
+              payload: {'message': text},
+            ),
+          );
+          return;
+        case ClientCommandType.cancelOrder:
+          await engine.cancelExchangeOrder(
+            symbol: message.payload['symbol'] as String? ?? '',
+            orderId: '${message.payload['orderId'] ?? ''}',
+            trigger: message.payload['trigger'] as bool? ?? false,
+          );
+        case ClientCommandType.updateExchangePositionExit:
+          await engine.updateExchangePositionExit(
+            positionId: (message.payload['positionId'] as num?)?.toInt() ?? 0,
+            takeProfitPrice:
+                (message.payload['takeProfitPrice'] as num?)?.toDouble(),
+            stopLossPrice:
+                (message.payload['stopLossPrice'] as num?)?.toDouble(),
+          );
+        case ClientCommandType.closeExchangePosition:
+          await engine.closeExchangePosition(
+            (message.payload['positionId'] as num?)?.toInt() ?? 0,
+          );
         case ClientCommandType.requestSnapshot:
           client.send(
             WireMessage(
@@ -410,11 +448,19 @@ class BotServer {
         WireMessage(
           type: ServerMessageType.error,
           id: message.id,
-          payload: {'message': '$e'},
+          payload: {'message': _reasonOf(e)},
         ),
       );
     }
   }
+
+  /// アプリに返す失敗の理由。例外の型名などは落として、文だけにする。
+  static String _reasonOf(Object e) => switch (e) {
+    StateError(:final message) => message,
+    ArgumentError(:final message) => '$message',
+    MexcApiException() => e.description,
+    _ => '$e',
+  };
 
   void _broadcastSnapshot(BotSnapshot snapshot) {
     _broadcast(

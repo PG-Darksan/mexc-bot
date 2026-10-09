@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../engine/bot_engine.dart';
 import '../models/bot_event.dart';
+import '../models/manual_order.dart';
 import '../models/signal.dart';
 import '../models/strategy_config.dart';
 
@@ -42,6 +43,27 @@ abstract class BotController {
     double? stopLossPrice,
     bool clearStopLoss = false,
   });
+
+  /// 手で新規注文を出す。出せたら説明を返す。出せなければ例外を投げる
+  /// (理由は例外の文に入っている)。
+  Future<String> placeManualOrder(ManualOrderRequest request);
+
+  /// 取引所に出ている注文を取り消す ([trigger] なら条件付き注文)。
+  Future<void> cancelExchangeOrder({
+    required String symbol,
+    required String orderId,
+    required bool trigger,
+  });
+
+  /// ボットが管理していない建玉に、利確 / 損切りを置く。
+  Future<void> updateExchangePositionExit({
+    required int positionId,
+    double? takeProfitPrice,
+    double? stopLossPrice,
+  });
+
+  /// ボットが管理していない建玉を成行で閉じる。
+  Future<void> closeExchangePosition(int positionId);
 
   Future<void> dispose();
 }
@@ -122,6 +144,36 @@ class LocalBotController implements BotController {
     stopLossPrice: stopLossPrice,
     clearStopLoss: clearStopLoss,
   );
+
+  @override
+  Future<String> placeManualOrder(ManualOrderRequest request) =>
+      _engine.placeManualOrder(request);
+
+  @override
+  Future<void> cancelExchangeOrder({
+    required String symbol,
+    required String orderId,
+    required bool trigger,
+  }) => _engine.cancelExchangeOrder(
+    symbol: symbol,
+    orderId: orderId,
+    trigger: trigger,
+  );
+
+  @override
+  Future<void> updateExchangePositionExit({
+    required int positionId,
+    double? takeProfitPrice,
+    double? stopLossPrice,
+  }) => _engine.updateExchangePositionExit(
+    positionId: positionId,
+    takeProfitPrice: takeProfitPrice,
+    stopLossPrice: stopLossPrice,
+  );
+
+  @override
+  Future<void> closeExchangePosition(int positionId) =>
+      _engine.closeExchangePosition(positionId);
 
   /// 保存済みの建玉を復元する。
   void restorePositions(Iterable<ManagedPosition> positions) =>

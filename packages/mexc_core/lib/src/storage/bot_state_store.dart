@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../models/manual_order.dart';
 import '../models/signal.dart';
 import '../models/strategy_config.dart';
 
@@ -14,6 +15,10 @@ abstract class BotStateStore {
   /// アプリから最後に「開始」したか「停止」したか。一度も無ければ null。
   Future<bool?> loadRunning();
   Future<void> saveRunning(bool running);
+
+  /// 条件付き注文に付けた利確 / 損切りの予約。再起動しても消えないように残す。
+  Future<List<PendingExit>> loadPendingExits() async => const [];
+  Future<void> savePendingExits(List<PendingExit> exits) async {}
 }
 
 /// JSON ファイルに書き出す実装。サーバー常駐時に使う。
@@ -28,6 +33,7 @@ class FileBotStateStore implements BotStateStore {
   File get _configFile => File('${directory.path}/config.json');
   File get _positionsFile => File('${directory.path}/positions.json');
   File get _runningFile => File('${directory.path}/running.json');
+  File get _pendingExitsFile => File('${directory.path}/pending_exits.json');
 
   Future<void> _ensureDirectory() async {
     if (!await directory.exists()) {
@@ -91,5 +97,27 @@ class FileBotStateStore implements BotStateStore {
   Future<void> saveRunning(bool running) async {
     await _ensureDirectory();
     await _runningFile.writeAsString(jsonEncode({'running': running}));
+  }
+
+  @override
+  Future<List<PendingExit>> loadPendingExits() async {
+    try {
+      if (!await _pendingExitsFile.exists()) return const [];
+      final json = jsonDecode(await _pendingExitsFile.readAsString()) as List;
+      return json
+          .whereType<Map>()
+          .map((e) => PendingExit.fromJson(e.cast<String, dynamic>()))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  @override
+  Future<void> savePendingExits(List<PendingExit> exits) async {
+    await _ensureDirectory();
+    await _pendingExitsFile.writeAsString(
+      jsonEncode(exits.map((e) => e.toJson()).toList()),
+    );
   }
 }

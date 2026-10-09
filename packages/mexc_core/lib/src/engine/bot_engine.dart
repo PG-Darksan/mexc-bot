@@ -4,6 +4,8 @@ import '../api/mexc_exception.dart';
 import '../api/mexc_rest_client.dart';
 import '../api/mexc_ws_client.dart';
 import '../models/bot_event.dart';
+import '../models/contract_info.dart';
+import '../models/manual_order.dart';
 import '../models/position.dart';
 import '../models/signal.dart';
 import '../models/strategy_config.dart';
@@ -89,6 +91,34 @@ class BotEngine {
   /// 画面に返す決済の記録の件数。
   static const int maxExchangeClosedInSnapshot = 50;
 
+  /// 取引所に出ている指値と条件付き注文 (手で出したものも)。まだ取って
+  /// いなければ null。
+  List<ExchangeOrder>? _openOrders;
+  bool _warnedOrderFetch = false;
+
+  /// 条件付き注文に付けた利確 / 損切りの予約。発動して建玉ができたら置く。
+  final List<PendingExit> _pendingExits = [];
+
+  /// 予約の条件付き注文が一覧から消えた時刻。発動して建つまで少し待つ。
+  final Map<String, DateTime> _planGoneAt = {};
+
+  /// 予約を置こうとして失敗した回数。何度も失敗するものは諦めて知らせる。
+  final Map<String, int> _pendingExitFailures = {};
+
+  /// 止めている間も、予約がある間は取引所を見に行く。
+  Timer? _manualTimer;
+
+  /// 予約が変わったときに呼ぶ (サーバーがファイルに残す)。
+  void Function(List<PendingExit> exits)? onPendingExitsChanged;
+
+  /// 予約の条件付き注文が消えてから、建玉が出てこなければ諦めるまでの時間。
+  static const Duration pendingExitGoneGrace = Duration(minutes: 3);
+
+  /// 止めている間に、予約のために取引所を見に行く間隔。
+  static const Duration manualSyncInterval = Duration(seconds: 30);
+
+  int _manualOrderSerial = 0;
+
   /// 管理外の建玉について、すでに知らせた銘柄。同じ警告を毎分出さないため。
   final Set<String> _warnedForeignSymbols = {};
 
@@ -153,6 +183,8 @@ class BotEngine {
         if (_feed.contractOf(p.symbol) != null)
           p.symbol: _feed.contractOf(p.symbol)!.contractSize,
     },
+    openOrders: _openOrders,
+    pendingExits: List.unmodifiable(_pendingExits),
   );
 
   // ── 起動 / 停止 ─────────────────────────────────────────────
@@ -630,7 +662,20 @@ class BotEngine {
       _unsureOrders.removeWhere(
         (_, at) => DateTime.now().difference(at) >= exchangeSyncGrace,
       );
-      _heldSymbols = {...openSymbols, ...pending, ..._unsureOrders.keys};
+      // 出ている注文も取る。手で出した新規の注文がある銘柄には、ボットは
+      // 入らない (約定すると手の注文とボットの建玉が 1 つにまとまるため)。
+      final orders = await _fetchOpenOrders();
+      if (orders != null) _openOrders = orders;
+      final manualOrderSymbols = {
+        for (final o in _openOrders ?? const <ExchangeOrder>[])
+          if (o.opens && !o.fromBot) o.symbol,
+      };
+      _heldSymbols = {
+        ...openSymbols,
+        ...pending,
+        ..._unsureOrders.keys,
+        ...manualOrderSymbols,
+      };
 
       for (final position in _positions.values.toList()) {
         // 発注直後は反映が遅れることがあるので少し猶予を置く。
@@ -708,6 +753,8 @@ class BotEngine {
         ));
       }
       _warnedForeignSymbols.removeWhere((s) => !openSymbols.contains(s));
+
+      if (orders != null) await _applyPendingExits(open, orders);
     } on MexcApiException catch (e) {
       _log(BotEvent.warning('口座情報の同期に失敗: ${e.description}'));
     } catch (e) {
@@ -945,6 +992,481 @@ class BotEngine {
     _emitSnapshot();
   }
 
+  // ── 手で出す注文 (アプリから) ─────────────────────────────
+
+  /// アプリから手で新規注文を出す。出せたら記録に残した説明を返す。
+  ///
+  /// 銘柄仕様・現在値・残高はこの場で取り直す (止めている間は相場を
+  /// 取っていないため)。中身がおかしいときや取引所が弾いたときは例外を
+  /// 投げる (サーバーがそのままアプリへ返す)。
+  Future<String> placeManualOrder(ManualOrderRequest request) async {
+    if (!_rest.hasCredentials) {
+      throw StateError('サーバーに取引所の API キーが入っていないので、注文を出せません。');
+    }
+    final symbol = request.symbol.trim();
+    final contract = await _contractFor(symbol);
+    final lastPrice = await _lastPriceFor(symbol, refresh: !_running);
+    final errors = request.validate(lastPrice: lastPrice);
+    if (errors.isNotEmpty) throw StateError(errors.join(' / '));
+
+    final direction = request.direction;
+    final isShort = direction.isShort;
+    final minLeverage = contract.minLeverage < 1 ? 1 : contract.minLeverage;
+    final maxLeverage = contract.maxLeverage < minLeverage
+        ? minLeverage
+        : contract.maxLeverage;
+    final leverage = request.leverage.clamp(minLeverage, maxLeverage);
+    if (leverage != request.leverage) {
+      _log(BotEvent.info(
+        '$symbol: レバレッジを銘柄の範囲 ($minLeverage〜$maxLeverage 倍) に合わせて '
+        '$leverage 倍にします',
+        symbol: symbol,
+      ));
+    }
+
+    // 指値は自分に有利な側 (買いは下 / 売りは上) へ刻みを丸める。利確と
+    // 損切りは、建玉の利確 / 損切りを置き直すときと同じ向きに丸める。
+    final limitPrice = request.price == null
+        ? null
+        : contract.roundPrice(request.price!, roundUp: isShort);
+    final triggerPrice = request.triggerPrice == null
+        ? null
+        : contract.roundPrice(
+            request.triggerPrice!,
+            roundUp: request.triggerPrice! >= lastPrice,
+          );
+    final takeProfit = request.takeProfitPrice == null
+        ? null
+        : contract.roundPrice(request.takeProfitPrice!, roundUp: isShort);
+    final stopLoss = request.stopLossPrice == null
+        ? null
+        : contract.roundPrice(request.stopLossPrice!, roundUp: !isShort);
+
+    // 数量は「その値段で建てたら」で決める。成行はいまの値段 (約定しやすい側)。
+    final reference = switch (request.kind) {
+      ManualOrderKind.market =>
+        contract.roundPrice(lastPrice, roundUp: !isShort),
+      ManualOrderKind.limit => limitPrice!,
+      ManualOrderKind.trigger =>
+        request.triggerExecution == TriggerExecution.limit
+            ? (limitPrice ?? triggerPrice!)
+            : triggerPrice!,
+    };
+
+    // 証拠金は、いま使える残高を超えない分にする (手数料の分だけ余らせる)。
+    await _refreshAssetQuietly();
+    var margin = request.marginUsdt;
+    final available = _asset?.availableBalance;
+    if (available != null && available > 0 && margin > available * 0.99) {
+      margin = available * 0.99;
+      _log(BotEvent.info(
+        '$symbol: 証拠金を使える残高に合わせて ${margin.toStringAsFixed(2)} USDT に'
+        '減らします',
+        symbol: symbol,
+      ));
+    }
+    final vol = contract.volumeForMargin(
+      marginUsdt: margin,
+      leverage: leverage.toDouble(),
+      price: reference,
+    );
+    if (vol == null) {
+      throw StateError(
+        '$symbol: 証拠金 ${margin.toStringAsFixed(2)} USDT × $leverage 倍では'
+        '最小数量 (${contract.minVol} 枚) に届きません。',
+      );
+    }
+
+    // 建玉が無い状態では leverage + openType + symbol + positionType を
+    // すべて渡す必要がある。同じ値なら弾かれることがあるが、発注にも
+    // leverage を渡すので続ける。
+    try {
+      await _rest.changeLeverage(
+        leverage: leverage,
+        openType: _config.openType,
+        symbol: symbol,
+        positionType: direction.positionType,
+      );
+    } on MexcApiException catch (e) {
+      _log(BotEvent.info('$symbol: レバレッジ設定をスキップ (${e.description})'));
+    }
+
+    final externalOid =
+        'man${DateTime.now().millisecondsSinceEpoch}${++_manualOrderSerial}';
+    late final String orderId;
+    switch (request.kind) {
+      case ManualOrderKind.market:
+      case ManualOrderKind.limit:
+        final result = await _rest.createOrder(
+          symbol: symbol,
+          price: reference,
+          vol: vol,
+          side: direction.openSide,
+          // 1 = 指値 / 5 = 成行。
+          type: request.kind == ManualOrderKind.limit ? 1 : 5,
+          openType: _config.openType,
+          leverage: leverage,
+          // 利確と損切りは発注と同時に取引所へ預ける。
+          takeProfitPrice: takeProfit,
+          stopLossPrice: stopLoss,
+          positionMode: _config.positionModeValue,
+          externalOid: externalOid,
+        );
+        orderId = result.orderId;
+      case ManualOrderKind.trigger:
+        final baseVol = (_exchangeOpen ?? const <PositionInfo>[])
+            .where(
+              (p) =>
+                  p.symbol == symbol &&
+                  p.positionType == direction.positionType,
+            )
+            .fold<double>(0, (sum, p) => sum + p.holdVol);
+        orderId = await _rest.placePlanOrder(
+          symbol: symbol,
+          vol: vol,
+          side: direction.openSide,
+          openType: _config.openType,
+          triggerPrice: triggerPrice!,
+          triggerType: ManualOrderRequest.triggerTypeFor(
+            triggerPrice,
+            lastPrice,
+          ),
+          price: request.triggerExecution == TriggerExecution.limit
+              ? limitPrice
+              : null,
+          leverage: leverage,
+          orderType: request.triggerExecution.orderType,
+        );
+        // 取引所の条件付き注文には利確 / 損切りを付けられないので、
+        // 発動して建玉ができたらサーバーが置く。
+        if (takeProfit != null || stopLoss != null) {
+          _pendingExits.add(PendingExit(
+            planOrderId: orderId,
+            symbol: symbol,
+            direction: direction,
+            createdAt: DateTime.now(),
+            takeProfitPrice: takeProfit,
+            stopLossPrice: stopLoss,
+            baseVol: baseVol,
+          ));
+          _pendingExitsChanged();
+        }
+    }
+
+    final message = '手で注文しました: ${request.describe()} → '
+        '${vol.toStringAsFixed(contract.volScale)} 枚 (注文ID $orderId)';
+    _log(BotEvent.trade(message, symbol: symbol));
+    // 約定すれば建玉になる。ボットが同じ銘柄に重ねて入らないようにする。
+    _heldSymbols = {..._heldSymbols, symbol};
+    final orders = await _fetchOpenOrders();
+    if (orders != null) _openOrders = orders;
+    _emitSnapshot();
+    // 成行はすぐ建つので、少し待って建玉と残高を取り直す。
+    if (request.kind == ManualOrderKind.market) {
+      unawaited(
+        Future<void>.delayed(const Duration(seconds: 2), () async {
+          await _syncExchangeState();
+          _emitSnapshot();
+        }),
+      );
+    }
+    return message;
+  }
+
+  /// 取引所に出ている注文を取り消す ([trigger] なら条件付き注文)。
+  Future<void> cancelExchangeOrder({
+    required String symbol,
+    required String orderId,
+    required bool trigger,
+  }) async {
+    if (!_rest.hasCredentials) {
+      throw StateError('サーバーに取引所の API キーが入っていないので、取り消せません。');
+    }
+    if (trigger) {
+      await _rest.cancelPlanOrders([(symbol: symbol, orderId: orderId)]);
+      final before = _pendingExits.length;
+      _pendingExits.removeWhere((e) => e.planOrderId == orderId);
+      if (_pendingExits.length != before) _pendingExitsChanged();
+    } else {
+      await _rest.cancelOrders([orderId]);
+      // ボットの買い足しを消したなら、その建玉の記録からも外す
+      // (決済のときに、もう無い注文を取り消しに行かないように)。
+      for (final p in _positions.values.toList()) {
+        if (p.addOnOrderId == orderId && !p.addOnFilled) {
+          _positions[p.id] = p.copyWith(clearAddOn: true);
+        }
+      }
+    }
+    _log(BotEvent.trade(
+      '$symbol: ${trigger ? "条件付き注文" : "指値"} (注文ID $orderId) を取り消しました',
+      symbol: symbol,
+    ));
+    final orders = await _fetchOpenOrders();
+    if (orders != null) _openOrders = orders;
+    _emitSnapshot();
+  }
+
+  /// ボットが管理していない建玉 (手で建てたもの) に、利確 / 損切りを置く。
+  ///
+  /// ボットの建玉は [updatePositionExit] で動かす (手元の記録も合わせるため)。
+  Future<void> updateExchangePositionExit({
+    required int positionId,
+    double? takeProfitPrice,
+    double? stopLossPrice,
+  }) async {
+    if (!_rest.hasCredentials) {
+      throw StateError('サーバーに取引所の API キーが入っていないので、置けません。');
+    }
+    if (takeProfitPrice == null && stopLossPrice == null) {
+      throw StateError('利確か損切りの値段を入れて下さい。');
+    }
+    final position = await _exchangePositionOf(positionId);
+    final contract = await _contractFor(position.symbol);
+    final isShort = position.isShort;
+    final tp = takeProfitPrice == null
+        ? null
+        : contract.roundPrice(takeProfitPrice, roundUp: isShort);
+    final sl = stopLossPrice == null
+        ? null
+        : contract.roundPrice(stopLossPrice, roundUp: !isShort);
+    final entry = position.holdAvgPrice;
+    if (entry > 0) {
+      final side = isShort ? 'ショート' : 'ロング';
+      if (tp != null && (isShort ? tp >= entry : tp <= entry)) {
+        throw StateError('$sideの利確は建値 ($entry) より${isShort ? "下" : "上"}にして下さい。');
+      }
+      if (sl != null && (isShort ? sl <= entry : sl >= entry)) {
+        throw StateError('$sideの損切りは建値 ($entry) より${isShort ? "上" : "下"}にして下さい。');
+      }
+    }
+    await _rest.placePositionTpSl(
+      positionId: positionId,
+      vol: position.holdVol,
+      takeProfitPrice: tp,
+      stopLossPrice: sl,
+    );
+    _log(BotEvent.trade(
+      '${position.symbol}: 手で建てた建玉に 利確 ${tp ?? "-"} / 損切り ${sl ?? "-"} を'
+      '置きました (${position.holdVol} 枚)',
+      symbol: position.symbol,
+    ));
+    _emitSnapshot();
+  }
+
+  /// ボットが管理していない建玉 (手で建てたもの) を成行で閉じる。
+  Future<void> closeExchangePosition(int positionId) async {
+    if (!_rest.hasCredentials) {
+      throw StateError('サーバーに取引所の API キーが入っていないので、決済出来ません。');
+    }
+    final position = await _exchangePositionOf(positionId);
+    final contract = await _contractFor(position.symbol);
+    final lastPrice = await _lastPriceFor(position.symbol, refresh: true);
+    final direction = TradeDirection.fromPositionType(position.positionType);
+    await _rest.closePosition(
+      symbol: position.symbol,
+      price: contract.roundPrice(lastPrice, roundUp: direction.isShort),
+      vol: position.holdVol,
+      side: direction.closeSide,
+      openType: position.openType,
+      positionId: position.positionId,
+      reduceOnly: true,
+      positionMode: _config.positionModeValue,
+    );
+    _log(BotEvent.trade(
+      '${position.symbol}: 手で建てた${direction.label}建玉 ${position.holdVol} 枚を'
+      '成行で決済しました',
+      symbol: position.symbol,
+    ));
+    await Future<void>.delayed(const Duration(seconds: 1));
+    await _syncExchangeState(includeHistory: true);
+    _emitSnapshot();
+  }
+
+  /// 保存してあった予約を戻す (サーバーの再起動時)。
+  void restorePendingExits(Iterable<PendingExit> exits) {
+    _pendingExits
+      ..clear()
+      ..addAll(exits);
+    _ensureManualTimer();
+  }
+
+  void _pendingExitsChanged() {
+    onPendingExitsChanged?.call(List.unmodifiable(_pendingExits));
+    _ensureManualTimer();
+  }
+
+  /// 止めている間も、予約があれば取引所を見に行く (動いている間は判定の
+  /// たびに見るので要らない)。予約が無くなったら止める。
+  void _ensureManualTimer() {
+    if (_pendingExits.isEmpty) {
+      _manualTimer?.cancel();
+      _manualTimer = null;
+      return;
+    }
+    _manualTimer ??= Timer.periodic(manualSyncInterval, (_) async {
+      if (_running || _cycleInFlight) return;
+      await _syncExchangeState();
+      _emitSnapshot();
+    });
+  }
+
+  /// 条件付き注文が発動して建玉ができていたら、予約の利確 / 損切りを置く。
+  Future<void> _applyPendingExits(
+    List<PositionInfo> open,
+    List<ExchangeOrder> orders,
+  ) async {
+    if (_pendingExits.isEmpty) return;
+    final now = DateTime.now();
+    final waitingPlans = {
+      for (final o in orders)
+        if (o.kind == ExchangeOrderKind.trigger) o.id,
+    };
+    var changed = false;
+    for (final exit in _pendingExits.toList()) {
+      if (waitingPlans.contains(exit.planOrderId)) {
+        _planGoneAt.remove(exit.planOrderId);
+        continue;
+      }
+      final goneAt = _planGoneAt.putIfAbsent(exit.planOrderId, () => now);
+      final positions = open.where(
+        (p) =>
+            p.symbol == exit.symbol &&
+            p.positionType == exit.direction.positionType,
+      );
+      final held = positions.fold<double>(0, (sum, p) => sum + p.holdVol);
+      final position = positions.firstOrNull;
+      if (position == null || held <= exit.baseVol * 1.0001) {
+        // 発動して指値が板に残っている間は待つ。
+        final limitWaiting = orders.any(
+          (o) =>
+              o.kind == ExchangeOrderKind.limit &&
+              o.symbol == exit.symbol &&
+              o.opens &&
+              o.direction == exit.direction &&
+              !o.fromBot,
+        );
+        if (limitWaiting) {
+          _planGoneAt[exit.planOrderId] = now;
+          continue;
+        }
+        if (now.difference(goneAt) > pendingExitGoneGrace) {
+          _pendingExits.remove(exit);
+          _planGoneAt.remove(exit.planOrderId);
+          changed = true;
+          _log(BotEvent.info(
+            '${exit.symbol}: 条件付き注文 (注文ID ${exit.planOrderId}) が建たないまま'
+            '消えたので、利確 / 損切りの予約をやめました (取り消し・期限切れなど)',
+            symbol: exit.symbol,
+          ));
+        }
+        continue;
+      }
+      try {
+        await _rest.placePositionTpSl(
+          positionId: position.positionId,
+          vol: held,
+          takeProfitPrice: exit.takeProfitPrice,
+          stopLossPrice: exit.stopLossPrice,
+        );
+        _pendingExits.remove(exit);
+        _planGoneAt.remove(exit.planOrderId);
+        _pendingExitFailures.remove(exit.planOrderId);
+        changed = true;
+        _log(BotEvent.trade(
+          '${exit.symbol}: 条件付き注文が建ったので、利確 ${exit.takeProfitPrice ?? "-"} / '
+          '損切り ${exit.stopLossPrice ?? "-"} を $held 枚ぶん置きました',
+          symbol: exit.symbol,
+        ));
+      } catch (e) {
+        final failures = (_pendingExitFailures[exit.planOrderId] ?? 0) + 1;
+        _pendingExitFailures[exit.planOrderId] = failures;
+        if (failures >= 3) {
+          _pendingExits.remove(exit);
+          _planGoneAt.remove(exit.planOrderId);
+          _pendingExitFailures.remove(exit.planOrderId);
+          changed = true;
+          _log(BotEvent.error(
+            '${exit.symbol}: 条件付き注文で建った建玉に利確 / 損切りを置けませんでした ($e)。'
+            '取引所の画面かアプリから置いて下さい。',
+            symbol: exit.symbol,
+          ));
+        } else {
+          _log(BotEvent.warning(
+            '${exit.symbol}: 利確 / 損切りの予約を置けませんでした ($e)。次にもう一度試します。',
+            symbol: exit.symbol,
+          ));
+        }
+      }
+    }
+    if (changed) _pendingExitsChanged();
+  }
+
+  /// 指値と条件付き注文をまとめて取る。取れなければ null (前の一覧を使う)。
+  Future<List<ExchangeOrder>?> _fetchOpenOrders() async {
+    if (!_rest.hasCredentials) return null;
+    try {
+      final limits = await _rest.fetchOpenOrders();
+      final plans = await _rest.fetchPlanOrders();
+      _warnedOrderFetch = false;
+      return [...limits, ...plans]
+        ..sort((a, b) => b.createTime.compareTo(a.createTime));
+    } catch (e) {
+      if (!_warnedOrderFetch) {
+        _warnedOrderFetch = true;
+        _log(BotEvent.warning('出ている注文を取れませんでした: $e'));
+      }
+      return null;
+    }
+  }
+
+  Future<ContractInfo> _contractFor(String symbol) async {
+    var contract = _feed.contractOf(symbol);
+    if (contract == null) {
+      await _feed.refreshContracts();
+      contract = _feed.contractOf(symbol);
+    }
+    if (contract == null) {
+      throw StateError('$symbol は API で取引出来ない銘柄です。');
+    }
+    return contract;
+  }
+
+  Future<double> _lastPriceFor(String symbol, {required bool refresh}) async {
+    if (refresh || _feed.tickerOf(symbol) == null) {
+      await _feed.refreshTickers();
+    }
+    final price = _feed.tickerOf(symbol)?.lastPrice;
+    if (price == null || price <= 0) {
+      throw StateError('$symbol の現在値を取れませんでした。');
+    }
+    return price;
+  }
+
+  Future<void> _refreshAssetQuietly() async {
+    try {
+      final assets = await _rest.fetchAssets();
+      _asset = assets.where((a) => a.currency == 'USDT').firstOrNull ??
+          (assets.isEmpty ? null : assets.first);
+    } catch (_) {
+      // 取れなければ前の残高のまま。取引所も残高を超える注文は弾く。
+    }
+  }
+
+  Future<PositionInfo> _exchangePositionOf(int positionId) async {
+    bool same(PositionInfo p) => p.positionId == positionId;
+    var position = (_exchangeOpen ?? const <PositionInfo>[])
+        .where(same)
+        .firstOrNull;
+    if (position == null) {
+      final list = await _rest.fetchOpenPositions();
+      position = list.where(same).where((p) => p.holdVol > 0).firstOrNull;
+    }
+    if (position == null) {
+      throw StateError('建玉 (ID $positionId) が見つかりません。もう決済されたかもしれません。');
+    }
+    return position;
+  }
+
   // ── 監視銘柄 ────────────────────────────────────────────────
 
   Future<void> _refreshWatchlist({bool force = false}) async {
@@ -1012,6 +1534,7 @@ class BotEngine {
 
   Future<void> dispose() async {
     _timer?.cancel();
+    _manualTimer?.cancel();
     await _wsStatusSub?.cancel();
     await _feed.dispose();
     await _ws.dispose();

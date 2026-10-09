@@ -67,6 +67,25 @@ class ChartDataSource {
     return tickers.where((t) => tradable.contains(t.symbol)).toList();
   }
 
+  List<ContractInfo>? _contracts;
+  DateTime _contractsAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// 銘柄仕様 (値段の刻み・1 枚の大きさ・レバレッジの上限)。30 分ほど覚える。
+  /// 取れなければ null (注文の目安を出さないだけで、注文は出せる)。
+  Future<ContractInfo?> contract(String symbol) async {
+    try {
+      if (_contracts == null ||
+          DateTime.now().difference(_contractsAt) > const Duration(minutes: 30)) {
+        _contracts = await _rest.fetchContracts();
+        _contractsAt = DateTime.now();
+      }
+      for (final c in _contracts!) {
+        if (c.symbol == symbol) return c;
+      }
+    } catch (_) {}
+    return null;
+  }
+
   /// 取引できる USDT 無期限の銘柄を、名前順で返す。検索に使う。
   Future<List<String>> symbols() async {
     final contracts = await _rest.fetchContracts();

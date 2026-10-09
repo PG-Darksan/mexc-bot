@@ -27,6 +27,18 @@ class ClientCommandType {
   static const String refreshAccount = 'refreshAccount';
   static const String requestSnapshot = 'requestSnapshot';
   static const String requestHistory = 'requestHistory';
+
+  /// アプリから手で出す新規注文 (成行 / 指値 / 条件付き)。
+  static const String placeOrder = 'placeOrder';
+
+  /// 取引所に出ている注文 (指値 / 条件付き) の取り消し。
+  static const String cancelOrder = 'cancelOrder';
+
+  /// ボットが管理していない建玉に、利確 / 損切りを置く。
+  static const String updateExchangePositionExit = 'updateExchangePositionExit';
+
+  /// ボットが管理していない建玉を成行で閉じる。
+  static const String closeExchangePosition = 'closeExchangePosition';
 }
 
 /// 1 通ぶんのメッセージ。

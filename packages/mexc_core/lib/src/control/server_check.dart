@@ -4,6 +4,22 @@ import 'dart:io';
 
 import 'protocol.dart';
 
+/// Tailscale のアドレス (100.64.0.0/10 か `*.ts.net`) につなぐ URL か。
+///
+/// そうなら、つながらないときは「この端末の Tailscale がオンか」を真っ先に
+/// 疑う (スマホは Tailscale アプリが止められていることが多い)。
+bool isTailscaleServerUrl(String raw) {
+  final host = normalizeServerUrl(raw)?.host.toLowerCase();
+  if (host == null || host.isEmpty) return false;
+  if (host.endsWith('.ts.net')) return true;
+  final parts = host.split('.');
+  if (parts.length != 4) return false;
+  final a = int.tryParse(parts[0]);
+  final b = int.tryParse(parts[1]);
+  if (a == null || b == null) return false;
+  return a == 100 && b >= 64 && b <= 127;
+}
+
 /// 「サーバーのURL」に入れた文字を、WebSocket が受け付ける形に直す。
 ///
 /// 入れ間違いが多いので、次の面倒は黙って吸収する。

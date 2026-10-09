@@ -4,6 +4,7 @@ import 'desktop/tray_service.dart';
 import 'settings/app_settings.dart';
 import 'state/app_state.dart';
 import 'ui/home_page.dart';
+import 'ui/lock_screen.dart';
 
 /// 画面ツリーに [AppState] を配る。
 class AppScope extends InheritedNotifier<AppState> {
@@ -67,6 +68,9 @@ class _MexcBotAppState extends State<MexcBotApp> {
             AppThemeMode.dark => ThemeMode.dark,
           },
           home: const HomePage(),
+          // ロック中は、どの画面の上からでも覆う。
+          builder: (context, child) =>
+              LockGate(child: child ?? const SizedBox.shrink()),
         ),
       ),
     );

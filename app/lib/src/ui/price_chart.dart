@@ -25,7 +25,7 @@ class PriceLine {
 }
 
 /// 足して描くバンド / EMA の色。σ や期間ごとに決めておき、どのチャートでも同じ色にする。
-Color _extraColor(num key) => switch (key) {
+Color chartLineColor(num key) => switch (key) {
   1 => const Color(0xFF90A4AE),
   2 => const Color(0xFF64B5F6),
   3 => const Color(0xFFBA68C8),
@@ -39,7 +39,7 @@ Color _extraColor(num key) => switch (key) {
   _ => const Color(0xFF9E9E9E),
 };
 
-String _trimNumber(double v) {
+String trimChartNumber(double v) {
   final text = v.toString();
   return text.endsWith('.0') ? text.substring(0, text.length - 2) : text;
 }
@@ -113,9 +113,9 @@ class PriceChart extends StatelessWidget {
     List<T> tail<T>(List<T> values) => values.sublist(start);
 
     final shown = tail(candles);
-    final bands = tail(_bollingerSeries(closes, bbPeriod, bbSigma));
+    final bands = tail(bollingerSeries(closes, bbPeriod, bbSigma));
     final showStrategy = sigmas.contains(bbSigma);
-    final emas = tail(_reliableEma(closes, emaPeriod));
+    final emas = tail(reliableEma(closes, emaPeriod));
     // σ を変えても平均と標準偏差は同じなので、判定のバンドから引き直す。
     final others = {
       for (final s in sigmas)
@@ -132,7 +132,7 @@ class PriceChart extends StatelessWidget {
             for (final b in bands)
               b == null ? null : b.middle - b.deviation * s,
           ],
-          color: _extraColor(s),
+          color: chartLineColor(s),
         ),
     ];
     final periods = {
@@ -141,7 +141,7 @@ class PriceChart extends StatelessWidget {
     }.toList()..sort();
     final extraEmaLines = [
       for (final p in periods)
-        (values: tail(_reliableEma(closes, p)), color: _extraColor(p)),
+        (values: tail(reliableEma(closes, p)), color: chartLineColor(p)),
     ];
 
     // 値幅は、ローソク・バンド・横線がすべて入るように取る。
@@ -227,12 +227,12 @@ class PriceChart extends StatelessWidget {
     final legend = <(String, Color)>[
       if (showStrategy)
         (
-          'BB($bbPeriod) ${_trimNumber(bbSigma)}σ (判定)',
+          'BB($bbPeriod) ${trimChartNumber(bbSigma)}σ (判定)',
           theme.colorScheme.tertiary,
         ),
-      for (final s in others) ('${_trimNumber(s)}σ', _extraColor(s)),
+      for (final s in others) ('${trimChartNumber(s)}σ', chartLineColor(s)),
       ('EMA$emaPeriod (利確)', theme.colorScheme.primary),
-      for (final p in periods) ('EMA$p', _extraColor(p)),
+      for (final p in periods) ('EMA$p', chartLineColor(p)),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -270,7 +270,7 @@ class PriceChart extends StatelessWidget {
   /// EMA は最初の [period] 本の平均から始めるので、始めてすぐは取れなかった
   /// 過去の足の分だけずれている。期間の 2 倍の足を重ねれば、始めの影響は
   /// 2% 未満になるので、そこから描く。
-  static List<double?> _reliableEma(List<double> closes, int period) {
+  static List<double?> reliableEma(List<double> closes, int period) {
     final series = Indicators.emaSeries(closes, period);
     final first = period - 1 + period * 2;
     for (var i = 0; i < series.length && i < first; i++) {
@@ -280,7 +280,7 @@ class PriceChart extends StatelessWidget {
   }
 
   /// 各時点のボリンジャーバンド。先頭 [period]-1 本は null。
-  static List<BollingerPoint?> _bollingerSeries(
+  static List<BollingerPoint?> bollingerSeries(
     List<double> closes,
     int period,
     double sigma,

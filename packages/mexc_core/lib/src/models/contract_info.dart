@@ -90,7 +90,7 @@ class ContractInfo {
   /// 約定しやすい (= より高い価格で買い戻す) ため既定で切り上げる。
   double roundPrice(double price, {bool roundUp = true}) {
     if (priceUnit <= 0) return price;
-    final units = price / priceUnit;
+    final units = _snap(price / priceUnit);
     final rounded = roundUp ? units.ceil() : units.floor();
     final value = rounded * priceUnit;
     return double.parse(value.toStringAsFixed(priceScale.clamp(0, 12)));
@@ -99,9 +99,19 @@ class ContractInfo {
   /// 注文数量 (枚) を刻みに合わせて切り下げる。
   double roundVolume(double vol) {
     if (volUnit <= 0) return vol;
-    final units = (vol / volUnit).floor();
+    final units = _snap(vol / volUnit).floor();
     final value = units * volUnit;
     return double.parse(value.toStringAsFixed(volScale.clamp(0, 12)));
+  }
+
+  /// 割り算の誤差で刻みのすぐ手前になった値を、刻みちょうどに戻す。
+  ///
+  /// 2.8 / 0.001 は 2799.9999999999995 になるので、そのまま切り下げると
+  /// 1 刻み (2.799) ずれる。
+  static double _snap(double units) {
+    final nearest = units.roundToDouble();
+    final tolerance = 1e-9 * (nearest.abs() < 1 ? 1 : nearest.abs());
+    return (units - nearest).abs() <= tolerance ? nearest : units;
   }
 
   /// 証拠金額 (USDT) とレバレッジから発注枚数を求める。

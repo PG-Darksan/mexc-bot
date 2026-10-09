@@ -7,6 +7,7 @@ import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/bot_event.dart';
+import '../models/manual_order.dart';
 import '../models/strategy_config.dart';
 import 'bot_controller.dart';
 import 'protocol.dart';
@@ -55,6 +56,13 @@ class RemoteBotController implements BotController {
   bool _fatal = false;
 
   String? _lastError;
+
+  /// 返事を待っているコマンド (id → 返事を渡す口)。
+  final Map<String, Completer<WireMessage>> _waiting = {};
+  int _commandSerial = 0;
+
+  /// コマンドの返事を待つ長さ。注文は取引所とのやり取りを挟むので長めにする。
+  static const Duration commandTimeout = Duration(seconds: 40);
 
   /// 直近のつながらない理由。null なら分かっていない。
   String? get lastError => _lastError;
@@ -162,7 +170,10 @@ class RemoteBotController implements BotController {
         );
       });
     } catch (e) {
-      _scheduleReconnect('接続出来ません (${_shortReason(e)})');
+      _scheduleReconnect(
+        '接続出来ません (${_shortReason(e)})'
+        '${isTailscaleServerUrl(serverUrl) ? '。この端末の Tailscale がオンか確かめて下さい' : ''}',
+      );
     }
   }
 
@@ -193,6 +204,13 @@ class RemoteBotController implements BotController {
             _eventController.add(BotEvent.fromJson(e));
           }
         }
+      case ServerMessageType.ack when _waiting.containsKey(message.id):
+        _waiting.remove(message.id)!.complete(message);
+      case ServerMessageType.error when _waiting.containsKey(message.id):
+        final text = message.payload['message'] as String? ?? '不明なエラー';
+        _waiting
+            .remove(message.id)!
+            .completeError(RemoteCommandException(text));
       case ServerMessageType.error:
         final text = message.payload['message'] as String? ?? '不明なエラー';
         if (!_eventController.isClosed) {
@@ -248,7 +266,44 @@ class RemoteBotController implements BotController {
     _scheduleReconnect(reason);
   }
 
+  /// 返事の要るコマンドを送り、ack (成功) か error (失敗) を待つ。
+  ///
+  /// つながっていなければ、送らずに失敗にする (送ったつもりで何も起きない
+  /// のを避けるため)。
+  Future<WireMessage> _request(
+    String type,
+    Map<String, dynamic> payload,
+  ) async {
+    if (_channel == null || !_authenticated) {
+      throw const RemoteCommandException(
+        'サーバーにつながっていません。つながってからもう一度押して下さい。',
+      );
+    }
+    final id = 'c${++_commandSerial}';
+    final completer = Completer<WireMessage>();
+    _waiting[id] = completer;
+    _send(WireMessage(type: type, id: id, payload: payload));
+    try {
+      return await completer.future.timeout(commandTimeout);
+    } on TimeoutException {
+      _waiting.remove(id);
+      throw const RemoteCommandException(
+        'サーバーから返事がありません。取引所の画面かアプリの一覧で、'
+        '通ったかどうかを確かめて下さい。',
+      );
+    }
+  }
+
+  void _failWaiting(String reason) {
+    final waiting = _waiting.values.toList();
+    _waiting.clear();
+    for (final c in waiting) {
+      if (!c.isCompleted) c.completeError(RemoteCommandException(reason));
+    }
+  }
+
   void _closeSocket() {
+    _failWaiting('サーバーとの接続が切れました。通ったかどうかを一覧で確かめて下さい。');
     _pingTimer?.cancel();
     _authTimer?.cancel();
     _authenticated = false;
@@ -338,8 +393,48 @@ class RemoteBotController implements BotController {
   );
 
   @override
+  Future<String> placeManualOrder(ManualOrderRequest request) async {
+    final reply = await _request(ClientCommandType.placeOrder, request.toJson());
+    return reply.payload['message'] as String? ?? '注文を出しました';
+  }
+
+  @override
+  Future<void> cancelExchangeOrder({
+    required String symbol,
+    required String orderId,
+    required bool trigger,
+  }) async {
+    await _request(ClientCommandType.cancelOrder, {
+      'symbol': symbol,
+      'orderId': orderId,
+      'trigger': trigger,
+    });
+  }
+
+  @override
+  Future<void> updateExchangePositionExit({
+    required int positionId,
+    double? takeProfitPrice,
+    double? stopLossPrice,
+  }) async {
+    await _request(ClientCommandType.updateExchangePositionExit, {
+      'positionId': positionId,
+      if (takeProfitPrice != null) 'takeProfitPrice': takeProfitPrice,
+      if (stopLossPrice != null) 'stopLossPrice': stopLossPrice,
+    });
+  }
+
+  @override
+  Future<void> closeExchangePosition(int positionId) async {
+    await _request(ClientCommandType.closeExchangePosition, {
+      'positionId': positionId,
+    });
+  }
+
+  @override
   Future<void> dispose() async {
     _disposed = true;
+    _failWaiting('アプリを閉じました');
     _pingTimer?.cancel();
     _authTimer?.cancel();
     _reconnectTimer?.cancel();
@@ -351,4 +446,14 @@ class RemoteBotController implements BotController {
     await _eventController.close();
     await _connectionController.close();
   }
+}
+
+/// サーバーがコマンドを断ったとき (理由はサーバーからの文)。
+class RemoteCommandException implements Exception {
+  const RemoteCommandException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }

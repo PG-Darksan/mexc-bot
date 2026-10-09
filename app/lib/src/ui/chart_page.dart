@@ -3,12 +3,14 @@ import 'package:mexc_core/mexc_core.dart';
 
 import '../app.dart';
 import '../data/chart_data.dart';
+import '../settings/app_settings.dart';
 import '../state/app_state.dart';
 import 'chart_overlays.dart';
 import 'dashboard_page.dart';
 import 'format.dart';
 import 'held_chart.dart';
 import 'price_chart.dart';
+import 'trade_page.dart';
 
 /// 動かすラインの種類。
 enum _ExitLine { takeProfit, stopLoss }
@@ -243,7 +245,15 @@ class _ChartPageState extends State<ChartPage> {
                     ? () => _focusMainChart(view.symbol)
                     : null,
               ),
-              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: () => TradePage.open(context, view.symbol),
+                  icon: const Icon(Icons.candlestick_chart, size: 16),
+                  label: const Text('取引画面で開く (注文・利確 / 損切り)'),
+                ),
+              ),
+              const SizedBox(height: 4),
             ],
           ],
           const SizedBox(height: 20),
@@ -294,6 +304,12 @@ class _ChartPageState extends State<ChartPage> {
               _loadChart();
             },
             onRefresh: _loadChart,
+            onOpenTrade: () =>
+                TradePage.open(context, _symbol, timeframe: _timeframe),
+            visibleBars: state.settings.chartBars,
+            onVisibleBarsChanged: (bars) => state.updateAppSettings(
+              state.settings.copyWith(chartBars: bars),
+            ),
             onDragPrice: position == null
                 ? null
                 : (price) => setState(() {
@@ -591,6 +607,9 @@ class _ChartCard extends StatelessWidget {
     required this.onTimeframeChanged,
     required this.onRefresh,
     required this.onDragPrice,
+    required this.onOpenTrade,
+    required this.visibleBars,
+    required this.onVisibleBarsChanged,
   });
 
   final String symbol;
@@ -607,6 +626,13 @@ class _ChartCard extends StatelessWidget {
   final ValueChanged<Timeframe> onTimeframeChanged;
   final VoidCallback onRefresh;
   final ValueChanged<double>? onDragPrice;
+
+  /// 取引画面 (注文・ピンチで拡大・線を引く) を開く。
+  final VoidCallback onOpenTrade;
+
+  /// 描く本数 (設定で覚える)。
+  final int visibleBars;
+  final ValueChanged<int> onVisibleBarsChanged;
 
   static const _shortLabels = {
     Timeframe.m5: '5m',
@@ -630,10 +656,7 @@ class _ChartCard extends StatelessWidget {
     // 「この期間」は描いている範囲 (直近の本数) で出す。取る本数はもっと多い。
     final first = closes.isEmpty
         ? null
-        : closes[(closes.length - PriceChart.defaultVisibleBars).clamp(
-            0,
-            closes.length - 1,
-          )];
+        : closes[(closes.length - visibleBars).clamp(0, closes.length - 1)];
     final change = (last == null || first == null || first == 0)
         ? null
         : (last - first) / first * 100;
@@ -658,7 +681,27 @@ class _ChartCard extends StatelessWidget {
                   _shortLabels[timeframe] ?? timeframe.label,
                   style: theme.textTheme.bodySmall,
                 ),
+                PopupMenuButton<int>(
+                  tooltip: '描く本数',
+                  onSelected: onVisibleBarsChanged,
+                  itemBuilder: (context) => [
+                    for (final n in AppSettings.chartBarChoices)
+                      PopupMenuItem(value: n, child: Text('$n 本')),
+                  ],
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: Text(
+                      '$visibleBars 本',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                ),
                 const ChartOverlayButton(),
+                IconButton(
+                  tooltip: '取引画面で開く (注文・ピンチで拡大・線を引く)',
+                  icon: const Icon(Icons.open_in_full, size: 20),
+                  onPressed: onOpenTrade,
+                ),
                 FilledButton.tonalIcon(
                   onPressed: loading ? null : onRefresh,
                   icon: loading
@@ -748,9 +791,16 @@ class _ChartCard extends StatelessWidget {
                   side.bbSigma,
                 ),
                 extraEmas: AppScope.of(context).settings.chartEmas,
+                visibleBars: visibleBars,
                 lines: lines,
                 onDragPrice: onDragPrice,
               ),
+            const SizedBox(height: 8),
+            FilledButton.tonalIcon(
+              onPressed: onOpenTrade,
+              icon: const Icon(Icons.candlestick_chart, size: 18),
+              label: const Text('取引画面で開く (注文・ピンチで拡大・線を引く)'),
+            ),
           ],
         ),
       ),

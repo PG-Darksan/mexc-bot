@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/candle.dart';
 import '../models/contract_info.dart';
+import '../models/manual_order.dart';
 import '../models/market_data.dart';
 import '../models/position.dart';
 import '../models/timeframe.dart';
@@ -338,6 +339,103 @@ class MexcRestClient {
     await _orderLimiter.acquire();
     final ids = orderIds.map((id) => int.tryParse(id) ?? id).toList();
     await _privatePostRaw('/api/v1/private/order/cancel', ids);
+  }
+
+  /// 条件付き注文 (トリガー注文) を出す。注文 ID を返す。
+  ///
+  /// [triggerType]: 1 = 発動価格以上で発動 / 2 = 以下で発動。
+  /// [orderType]: 発動したときの出し方。1 = 指値 ([price] が要る) / 5 = 成行。
+  /// [executeCycle]: 有効期間。1 = 24 時間 / 2 = 7 日。
+  /// [trend]: 発動を見る値段。1 = 最終取引価格 / 2 = 公正価格 / 3 = 指数価格。
+  ///
+  /// 取引所の条件付き注文には利確 / 損切りを付けられない (文書に無い)。
+  /// 新規注文と同じく、通ったか分からないときは送り直さない。
+  Future<String> placePlanOrder({
+    required String symbol,
+    required double vol,
+    required int side,
+    required int openType,
+    required double triggerPrice,
+    required int triggerType,
+    double? price,
+    int? leverage,
+    int executeCycle = 2,
+    int orderType = 5,
+    int trend = 1,
+  }) async {
+    await _orderLimiter.acquire();
+    final data = await _privatePost('/api/v1/private/planorder/place', {
+      'symbol': symbol,
+      if (price != null) 'price': price,
+      'vol': vol,
+      if (leverage != null) 'leverage': leverage,
+      'side': side,
+      'openType': openType,
+      'triggerPrice': triggerPrice,
+      'triggerType': triggerType,
+      'executeCycle': executeCycle,
+      'orderType': orderType,
+      'trend': trend,
+    }, resend: false);
+    if (data is Map<String, dynamic>) {
+      return '${data['orderId'] ?? data['id'] ?? ''}';
+    }
+    return '$data';
+  }
+
+  /// 条件付き注文を取り消す。
+  Future<void> cancelPlanOrders(
+    List<({String symbol, String orderId})> orders,
+  ) async {
+    if (orders.isEmpty) return;
+    await _orderLimiter.acquire();
+    await _privatePostRaw('/api/v1/private/planorder/cancel', [
+      for (final o in orders)
+        {'symbol': o.symbol, 'orderId': int.tryParse(o.orderId) ?? o.orderId},
+    ]);
+  }
+
+  /// 板に出ている (まだ約定していない) 注文。[symbol] を省くと全銘柄。
+  Future<List<ExchangeOrder>> fetchOpenOrders({String? symbol}) async {
+    await _queryLimiter.acquire();
+    final data = await _privateGet(
+      '/api/v1/private/order/list/open_orders/${symbol ?? ''}',
+      query: {'page_num': '1', 'page_size': '100'},
+    );
+    return _listOf(data)
+        .map(ExchangeOrder.fromOpenOrderJson)
+        .where((o) => o.id.isNotEmpty && o.vol > 0)
+        .toList();
+  }
+
+  /// まだ発動していない条件付き注文。[symbol] を省くと全銘柄。
+  Future<List<ExchangeOrder>> fetchPlanOrders({String? symbol}) async {
+    await _queryLimiter.acquire();
+    final data = await _privateGet(
+      '/api/v1/private/planorder/list/orders',
+      query: {
+        if (symbol != null) 'symbol': symbol,
+        // 1 = まだ発動していないもの。
+        'states': '1',
+        'page_num': '1',
+        'page_size': '100',
+      },
+    );
+    return _listOf(data)
+        .map(ExchangeOrder.fromPlanOrderJson)
+        .where((o) => o.id.isNotEmpty)
+        .toList();
+  }
+
+  /// 一覧そのものが返る場合と、ページ情報に包まれて返る場合がある。
+  static List<Map<String, dynamic>> _listOf(Object? data) {
+    final list = switch (data) {
+      final List<dynamic> l => l,
+      final Map<String, dynamic> m =>
+        (m['resultList'] as List?) ?? (m['data'] as List?) ?? const [],
+      _ => const [],
+    };
+    return list.whereType<Map>().map((e) => e.cast<String, dynamic>()).toList();
   }
 
   /// 指定ポジションを成行で全決済する。

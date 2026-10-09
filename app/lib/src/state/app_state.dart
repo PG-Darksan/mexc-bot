@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:mexc_core/mexc_core.dart';
 
+import '../data/chart_drawing.dart';
 import '../notify/trade_notifier.dart';
 import '../settings/app_settings.dart';
 import '../settings/settings_store.dart';
@@ -42,6 +43,13 @@ class AppState extends ChangeNotifier {
   final List<BotEvent> _events = [];
   bool _initialized = false;
   bool _refreshingAccount = false;
+
+  /// アプリのロックが解ける時刻。ロックしていなければ null。
+  DateTime? _lockUntil;
+  Timer? _lockTimer;
+
+  /// チャートに自分で引いた線 (銘柄ごと)。
+  Map<String, List<ChartDrawing>> _drawings = {};
 
   StreamSubscription<BotSnapshot>? _snapshotSub;
   StreamSubscription<BotEvent>? _eventSub;
@@ -97,9 +105,124 @@ class AppState extends ChangeNotifier {
   /// 1 枚あたりの数量。評価損益の計算に使う。
   double contractSizeOf(String symbol) => _snapshot.contractSizes[symbol] ?? 1;
 
+  /// サーバーにつながっているか。
+  bool get connected => _connection == ControllerConnection.connected;
+
+  /// [symbol] について取引所に出ている注文 (指値 / 条件付き)。
+  List<ExchangeOrder> openOrdersOf(String symbol) => [
+    for (final o in _snapshot.openOrders ?? const <ExchangeOrder>[])
+      if (o.symbol == symbol) o,
+  ];
+
+  /// [symbol] の、条件付き注文に付けた利確 / 損切りの予約。
+  List<PendingExit> pendingExitsOf(String symbol) => [
+    for (final e in _snapshot.pendingExits)
+      if (e.symbol == symbol) e,
+  ];
+
+  /// [symbol] の取引所の建玉 (ボットのものも手で建てたものも)。
+  List<PositionInfo> exchangePositionsOf(String symbol) => [
+    for (final p in _snapshot.exchangePositions ?? const <PositionInfo>[])
+      if (p.symbol == symbol && p.holdVol > 0) p,
+  ];
+
+  // ── アプリのロック ─────────────────────────────────────────
+
+  /// ロックが解ける時刻。ロックしていなければ null。
+  DateTime? get lockUntil => _lockUntil;
+
+  /// いまロックしているか。
+  bool get isLocked =>
+      _lockUntil != null && DateTime.now().isBefore(_lockUntil!);
+
+  /// [until] までアプリをロックする (チャートや値段を見えなくする)。
+  Future<void> lockUntilTime(DateTime until) async {
+    _lockUntil = until;
+    _scheduleUnlock();
+    notifyListeners();
+    await _store.saveLockUntil(until);
+  }
+
+  /// ロックを解く (時間が来たときと、長押しで解いたとき)。
+  Future<void> unlock() async {
+    _lockTimer?.cancel();
+    _lockTimer = null;
+    _lockUntil = null;
+    notifyListeners();
+    await _store.saveLockUntil(null);
+  }
+
+  void _scheduleUnlock() {
+    _lockTimer?.cancel();
+    final until = _lockUntil;
+    if (until == null) return;
+    final left = until.difference(DateTime.now());
+    if (left <= Duration.zero) {
+      _lockUntil = null;
+      unawaited(_store.saveLockUntil(null));
+      return;
+    }
+    _lockTimer = Timer(left, () {
+      _lockUntil = null;
+      notifyListeners();
+      unawaited(_store.saveLockUntil(null));
+    });
+  }
+
+  // ── チャートに引いた線 ─────────────────────────────────────
+
+  List<ChartDrawing> drawingsOf(String symbol) =>
+      List.unmodifiable(_drawings[symbol] ?? const <ChartDrawing>[]);
+
+  Future<void> setDrawings(String symbol, List<ChartDrawing> drawings) async {
+    _drawings = {..._drawings, symbol: List.of(drawings)};
+    notifyListeners();
+    await _store.saveDrawings(_drawings);
+  }
+
+  // ── 手で出す注文 ─────────────────────────────────────────
+
+  BotController get _requireController {
+    final controller = _controller;
+    if (controller == null) {
+      throw const RemoteCommandException('サーバーの設定がありません。設定タブで入れて下さい。');
+    }
+    return controller;
+  }
+
+  /// 手で新規注文を出す。出せたらサーバーからの説明を返す。
+  Future<String> placeManualOrder(ManualOrderRequest request) =>
+      _requireController.placeManualOrder(request);
+
+  /// 取引所に出ている注文を取り消す。
+  Future<void> cancelExchangeOrder(ExchangeOrder order) =>
+      _requireController.cancelExchangeOrder(
+        symbol: order.symbol,
+        orderId: order.id,
+        trigger: order.kind == ExchangeOrderKind.trigger,
+      );
+
+  /// ボットが管理していない建玉に利確 / 損切りを置く。
+  Future<void> updateExchangePositionExit({
+    required int positionId,
+    double? takeProfitPrice,
+    double? stopLossPrice,
+  }) => _requireController.updateExchangePositionExit(
+    positionId: positionId,
+    takeProfitPrice: takeProfitPrice,
+    stopLossPrice: stopLossPrice,
+  );
+
+  /// ボットが管理していない建玉を成行で閉じる。
+  Future<void> closeExchangePosition(int positionId) =>
+      _requireController.closeExchangePosition(positionId);
+
   Future<void> initialize() async {
     _settings = await _store.loadAppSettings();
     _config = await _store.loadStrategyConfig();
+    _lockUntil = await _store.loadLockUntil();
+    _scheduleUnlock();
+    _drawings = await _store.loadDrawings();
     _snapshot = BotSnapshot.initial(_config);
     _initialized = true;
     notifyListeners();
@@ -279,6 +402,7 @@ class AppState extends ChangeNotifier {
   /// アプリを終わらせる前の後片付け。接続を閉じる (ボットはサーバーで動き続ける)。
   Future<void> shutdown() async {
     _refreshTimer?.cancel();
+    _lockTimer?.cancel();
     await _snapshotSub?.cancel();
     await _eventSub?.cancel();
     await _connectionSub?.cancel();
@@ -290,6 +414,7 @@ class AppState extends ChangeNotifier {
   Future<void> dispose() async {
     chartRequest.dispose();
     _refreshTimer?.cancel();
+    _lockTimer?.cancel();
     await _snapshotSub?.cancel();
     await _eventSub?.cancel();
     await _connectionSub?.cancel();
