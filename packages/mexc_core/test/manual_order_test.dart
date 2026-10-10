@@ -401,6 +401,123 @@ void main() {
     });
   });
 
+  group('手で建てる時の「何 %」の基準', () {
+    // 1 枚 = 1 TEST・値段 2 USDT。上限 100 枚 = 1 倍で証拠金 200 USDT。
+    ContractInfo contract({double maxVol = 1000000, double? riskBaseVol}) =>
+        ContractInfo.fromJson({
+          ..._FakeExchange.contract,
+          'maxVol': maxVol,
+          if (riskBaseVol != null) 'riskBaseVol': riskBaseVol,
+          if (riskBaseVol != null) 'riskIncrVol': 0,
+          if (riskBaseVol != null) 'riskLevelLimit': 1,
+        });
+
+    test('銘柄の上限が残高より小さければ、上限に対する %', () {
+      final s = OrderSizeBasis.of(
+        available: 800,
+        contract: contract(riskBaseVol: 100),
+        price: 2,
+        leverage: 1,
+      );
+      expect(s.symbolLimit, closeTo(200, 1e-9));
+      expect(s.basedOnSymbolLimit, isTrue);
+      expect(s.base, closeTo(200, 1e-9));
+      // 残高 800 の 25% (= 200 で上限いっぱい) ではなく、上限 200 の 25%。
+      expect(s.marginFor(25), closeTo(50, 1e-9));
+      expect(s.marginFor(100), closeTo(200, 1e-9));
+      expect(s.percentOf(50), closeTo(25, 1e-9));
+    });
+
+    test('レバレッジを上げると、上限を証拠金に直した額は小さくなる', () {
+      final s = OrderSizeBasis.of(
+        available: 800,
+        contract: contract(riskBaseVol: 100),
+        price: 2,
+        leverage: 2,
+      );
+      expect(s.symbolLimit, closeTo(100, 1e-9));
+      expect(s.marginFor(50), closeTo(50, 1e-9));
+    });
+
+    test('上限が残高より大きければ、今まで通り残高に対する %', () {
+      final s = OrderSizeBasis.of(
+        available: 800,
+        contract: contract(riskBaseVol: 1000),
+        price: 2,
+        leverage: 1,
+      );
+      expect(s.basedOnSymbolLimit, isFalse);
+      expect(s.base, 800);
+      expect(s.marginFor(25), closeTo(200, 1e-9));
+    });
+
+    test('持っている分を引いた残りと、1 回の注文の上限を超えない', () {
+      // 上限 200 USDT のうち 60 枚 (120 USDT) を持っている → 残り 80 USDT。
+      final held = OrderSizeBasis.of(
+        available: 800,
+        contract: contract(riskBaseVol: 100),
+        price: 2,
+        leverage: 1,
+        heldVol: 60,
+      );
+      expect(held.base, closeTo(200, 1e-9));
+      expect(held.symbolRoom, closeTo(80, 1e-9));
+      expect(held.marginFor(25), closeTo(50, 1e-9));
+      expect(held.marginFor(75), closeTo(80, 1e-9));
+
+      // 1 回の注文は 30 枚 (60 USDT) まで。
+      final perOrder = OrderSizeBasis.of(
+        available: 800,
+        contract: contract(maxVol: 30, riskBaseVol: 100),
+        price: 2,
+        leverage: 1,
+      );
+      expect(perOrder.marginFor(50), closeTo(60, 1e-9));
+    });
+
+    test('上限が分からない・残高が分からない時', () {
+      final noLimit = OrderSizeBasis.of(
+        available: 800,
+        contract: contract(),
+        price: 2,
+        leverage: 1,
+      );
+      // maxVol 1,000,000 枚 = 200 万 USDT。残高の方が小さいので残高が基準。
+      expect(noLimit.basedOnSymbolLimit, isFalse);
+      expect(noLimit.marginFor(25), closeTo(200, 1e-9));
+
+      final unknown = OrderSizeBasis.of(
+        available: 800,
+        contract: ContractInfo.fromJson({
+          ..._FakeExchange.contract,
+          'maxVol': null,
+        }),
+        price: 2,
+        leverage: 1,
+      );
+      expect(unknown.symbolLimit, isNull);
+      expect(unknown.marginFor(25), 200);
+
+      final noPrice = OrderSizeBasis.of(
+        available: 800,
+        contract: contract(riskBaseVol: 100),
+        price: null,
+        leverage: 1,
+      );
+      expect(noPrice.base, 800);
+
+      final noBalance = OrderSizeBasis.of(
+        available: null,
+        contract: contract(riskBaseVol: 100),
+        price: 2,
+        leverage: 1,
+      );
+      expect(noBalance.base, isNull);
+      expect(noBalance.marginFor(25), isNull);
+      expect(noBalance.percentOf(50), 0);
+    });
+  });
+
   test('刻みちょうどの値段は、割り算の誤差で 1 刻みずらさない', () {
     final c = ContractInfo.fromJson(_FakeExchange.contract);
     expect(c.roundPrice(2.8, roundUp: false), 2.8);

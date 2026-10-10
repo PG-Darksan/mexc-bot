@@ -56,8 +56,8 @@ Widget _chartHost({
   ),
 );
 
-/// 取引画面に渡す、通信しないデータ元。
-ChartDataSource _fakeSource() {
+/// 取引画面に渡す、通信しないデータ元。[contractExtra] で銘柄の仕様を足せる。
+ChartDataSource _fakeSource({Map<String, dynamic> contractExtra = const {}}) {
   final client = MockClient((req) async {
     final path = req.url.path;
     if (path.startsWith('/api/v1/contract/kline/')) {
@@ -98,6 +98,7 @@ ChartDataSource _fakeSource() {
               'priceUnit': 0.1,
               'priceScale': 1,
               'maxLeverage': 100,
+              ...contractExtra,
             },
           ],
         }),
@@ -227,6 +228,83 @@ void main() {
       expect(button.onPressed, isNull);
 
       // 取り直しのタイマーを止める。
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('銘柄の上限が使える残高より小さければ、% は上限に対する割合', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final state = AppState(SettingsStore());
+      state.debugSetSnapshot(
+        const BotSnapshot(
+          running: false,
+          config: StrategyConfig(),
+          wsConnected: false,
+          watchedSymbolCount: 0,
+          subscriptionCount: 0,
+          evaluations: [],
+          positions: [],
+          closedPositions: [],
+          asset: AccountAsset(
+            currency: 'USDT',
+            availableBalance: 800,
+            equity: 800,
+            positionMargin: 0,
+            frozenBalance: 0,
+            unrealized: 0,
+            cashBalance: 800,
+          ),
+        ),
+      );
+      tester.view.physicalSize = const Size(900, 1600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      // 上限 20000 枚 × 0.0001 BTC = 2 BTC。いまの値段 (最後の終値) で 1 倍の証拠金にする。
+      await tester.pumpWidget(
+        AppScope(
+          state: state,
+          child: MaterialApp(
+            home: TradePage(
+              symbol: 'BTC_USDT',
+              source: _fakeSource(
+                contractExtra: {
+                  'riskBaseVol': 20000,
+                  'riskIncrVol': 0,
+                  'riskLevelLimit': 1,
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      final last = 100 + 10 * math.sin(200 / 10);
+      final limit = 20000 * 0.0001 * last;
+      expect(limit, lessThan(800));
+
+      final chip = find.widgetWithText(ActionChip, '25%');
+      await tester.ensureVisible(chip);
+      await tester.tap(chip);
+      await tester.pump();
+      final margin = tester.widget<TextField>(
+        find.widgetWithText(TextField, '証拠金 (USDT)'),
+      );
+      // 残高 800 の 25% (= 200、上限いっぱい) ではなく、上限の 25%。
+      expect(
+        double.parse(margin.controller!.text),
+        closeTo(limit * 0.25, 0.011),
+      );
+      expect(find.textContaining('上限に対する割合'), findsOneWidget);
+
+      // 上限を超えて入れると、超えていると出る。
+      await tester.enterText(
+        find.widgetWithText(TextField, '証拠金 (USDT)'),
+        '300',
+      );
+      await tester.pump();
+      expect(find.textContaining('建てられる残り'), findsOneWidget);
+
       await tester.pumpWidget(const SizedBox.shrink());
     });
   });

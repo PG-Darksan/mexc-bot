@@ -1,5 +1,8 @@
+import 'dart:math' as math;
+
 import 'package:meta/meta.dart';
 
+import 'contract_info.dart';
 import 'strategy_config.dart';
 
 /// アプリから手で出す注文の種類。
@@ -188,6 +191,116 @@ class ManualOrderRequest {
       takeProfitPrice: d('takeProfitPrice'),
       stopLossPrice: d('stopLossPrice'),
     );
+  }
+}
+
+/// 手で建てる時の「何 %」を、何に対する割合にするか。
+///
+/// ふつうは使える残高に対する %。ただし、この銘柄で持てる建玉の上限を
+/// 証拠金に直した額が使える残高より小さい時は、上限に対する % にする。
+/// 残高を基準にすると、たとえば残高 800 USDT の 25% = 200 USDT で、上限が
+/// 200 USDT の銘柄では上限いっぱいで建ってしまい、後からナンピンする余地が
+/// 残らないため。
+///
+/// どちらを基準にしても、決めた額は使える残高・この銘柄の残り (上限から、
+/// 持っている建玉と出ている注文の分を引いたもの)・1 回の注文の上限を超えない。
+@immutable
+class OrderSizeBasis {
+  const OrderSizeBasis({
+    required this.available,
+    this.symbolLimit,
+    this.symbolRoom,
+    this.orderLimit,
+  });
+
+  /// 値段・レバレッジ・持っている分から作る。
+  ///
+  /// [heldVol] は、この銘柄の同じ向きの建玉と、出ている (建てる側の) 注文の
+  /// 枚数の合計。
+  factory OrderSizeBasis.of({
+    required double? available,
+    required ContractInfo? contract,
+    required double? price,
+    required int leverage,
+    double heldVol = 0,
+  }) {
+    if (contract == null ||
+        price == null ||
+        !(price > 0) ||
+        !(contract.contractSize > 0) ||
+        leverage < 1) {
+      return OrderSizeBasis(available: available);
+    }
+    // 1 枚あたりの証拠金。
+    final perVol = contract.contractSize * price / leverage;
+    double? usdt(double vol) =>
+        vol.isFinite && vol > 0 && vol < _unknownVol ? vol * perVol : null;
+    final maxPosition = contract.maxPositionVol;
+    final limit = usdt(maxPosition);
+    return OrderSizeBasis(
+      available: available,
+      symbolLimit: limit,
+      symbolRoom: limit == null
+          ? null
+          : math.max(0.0, maxPosition - heldVol) * perVol,
+      orderLimit: usdt(contract.maxVol),
+    );
+  }
+
+  /// これ以上の枚数は「上限が分からない」とみなす (取引所が上限を返さない
+  /// 時は double.maxFinite が入る)。
+  static const double _unknownVol = 1e15;
+
+  /// 使える残高 (USDT)。分からなければ null。
+  final double? available;
+
+  /// この銘柄で持てる建玉の上限を、証拠金に直した額 (USDT)。分からなければ null。
+  final double? symbolLimit;
+
+  /// 上限から、持っている建玉と出ている注文の分を引いた残り (証拠金の USDT)。
+  final double? symbolRoom;
+
+  /// 1 回の注文の上限を、証拠金に直した額 (USDT)。
+  final double? orderLimit;
+
+  /// この銘柄の上限を基準にしているか (上限が使える残高より小さい)。
+  bool get basedOnSymbolLimit {
+    final a = available;
+    final l = symbolLimit;
+    return a != null && l != null && l < a;
+  }
+
+  /// % の基準 (USDT)。使える残高が分からなければ null (割合では決められない)。
+  double? get base {
+    final a = available;
+    if (a == null || !(a > 0)) return null;
+    return basedOnSymbolLimit ? symbolLimit : a;
+  }
+
+  /// これより多くは建てられない額 (USDT)。分からなければ null。
+  double? get cap {
+    double? m;
+    for (final v in [available, symbolRoom, orderLimit]) {
+      if (v == null) continue;
+      m = m == null ? v : math.min(m, v);
+    }
+    return m;
+  }
+
+  /// [percent] % の証拠金 (USDT)。[cap] を超えない。
+  double? marginFor(double percent) {
+    final b = base;
+    if (b == null) return null;
+    final m = b * percent.clamp(0, 100) / 100;
+    final c = cap;
+    return c == null ? m : math.min(m, c);
+  }
+
+  /// [margin] が基準の何 % か (0〜100)。
+  double percentOf(double margin) {
+    final b = base;
+    if (b == null || !(b > 0)) return 0;
+    return (margin / b * 100).clamp(0, 100).toDouble();
   }
 }
 

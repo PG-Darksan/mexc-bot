@@ -37,6 +37,8 @@ enum _PriceField {
 /// * 注文の値段は、欄の横の「チャートで選ぶ」を押してからチャートをタップ
 ///   するか、チャートを長押しして出る選択肢から入れる。
 /// * 数量は証拠金 (USDT) で入れるか、使える残高の何 % かをスライダーで選ぶ。
+///   この銘柄で持てる建玉の上限の方が残高より小さければ、上限の何 % か
+///   (上限いっぱいで建てて、ナンピンの余地を無くさないように)。
 ///
 /// 注文はサーバーが取引所へ出す (取引所の鍵はサーバーにだけある)。
 class TradePage extends StatefulWidget {
@@ -114,7 +116,6 @@ class _TradePageState extends State<TradePage> {
   final _tpCtrl = TextEditingController();
   final _slCtrl = TextEditingController();
   final _marginCtrl = TextEditingController();
-  double _percent = 0;
   int? _leverage;
   _PriceField _active = _PriceField.none;
   bool _submitting = false;
@@ -450,6 +451,73 @@ class _TradePageState extends State<TradePage> {
     takeProfitPrice: _parse(_tpCtrl.text),
     stopLossPrice: _parse(_slCtrl.text),
   );
+
+  /// この銘柄で、出そうとしている向きにすでに持っている枚数 (建玉と、建てる側の
+  /// 出ている注文)。銘柄の上限の残りを出すのに使う。
+  double _heldVolume(AppState state) {
+    var vol = 0.0;
+    for (final p in state.exchangePositionsOf(_symbol)) {
+      if (p.isShort == _direction.isShort) vol += p.holdVol;
+    }
+    for (final o in state.openOrdersOf(_symbol)) {
+      if (o.opens && o.direction == _direction) vol += o.vol;
+    }
+    return vol;
+  }
+
+  /// 「何 %」の基準。銘柄の上限が使える残高より小さければ上限が基準。
+  OrderSizeBasis _sizing(AppState state, ManualOrderRequest request) =>
+      OrderSizeBasis.of(
+        available: state.displayAsset?.availableBalance,
+        contract: _contract,
+        price: request.referencePrice(_lastPrice) ?? _lastPrice,
+        leverage: request.leverage,
+        heldVol: _heldVolume(state),
+      );
+
+  /// 何 % かを選んだ時に、証拠金の欄へ入れる。上限を超えないよう切り捨てる。
+  void _applyPercent(OrderSizeBasis sizing, double percent) {
+    final margin = sizing.marginFor(percent);
+    if (margin == null) return;
+    _marginCtrl.text = ((margin * 100).floorToDouble() / 100).toStringAsFixed(2);
+  }
+
+  /// % の基準について、注文欄に出す説明。言うことが無ければ null。
+  String? _sizingNote(OrderSizeBasis sizing) {
+    final limit = sizing.symbolLimit;
+    final room = sizing.symbolRoom;
+    if (limit == null || room == null) return null;
+    // 持っている建玉や出ている注文で、上限の残りが減っている時だけ言う。
+    final rest = room < limit - 0.005 ? room.toStringAsFixed(2) : null;
+    if (sizing.basedOnSymbolLimit) {
+      return 'この銘柄は今の倍率だと証拠金 ${limit.toStringAsFixed(2)} USDT までしか'
+          '建てられないので、% は使える残高ではなくこの上限に対する割合です。'
+          '${rest == null ? '' : '持っている建玉と出ている注文を引いた残りは $rest USDT です。'}';
+    }
+    final available = sizing.available;
+    if (rest != null && available != null && room < available) {
+      return 'この銘柄の上限から、持っている建玉と出ている注文を引いた残りは $rest USDT です。';
+    }
+    return null;
+  }
+
+  /// 入れた証拠金が建てられる額を超えていれば、その理由。
+  String? _overLimit(OrderSizeBasis sizing, double margin) {
+    const slack = 0.005;
+    final available = sizing.available;
+    if (available != null && margin > available + slack) {
+      return '使える残高 (${available.toStringAsFixed(2)} USDT) を超えています';
+    }
+    final room = sizing.symbolRoom;
+    if (room != null && margin > room + slack) {
+      return 'この銘柄で建てられる残り (${room.toStringAsFixed(2)} USDT) を超えています';
+    }
+    final perOrder = sizing.orderLimit;
+    if (perOrder != null && margin > perOrder + slack) {
+      return '1 回の注文の上限 (${perOrder.toStringAsFixed(2)} USDT) を超えています';
+    }
+    return null;
+  }
 
   Future<void> _submit() async {
     final state = AppScope.of(context);
@@ -918,7 +986,12 @@ class _TradePageState extends State<TradePage> {
     final available = state.displayAsset?.availableBalance;
     final request = _request(state);
     final errors = request.validate(lastPrice: _lastPrice);
-    final hasInput = (_parse(_marginCtrl.text) ?? 0) > 0;
+    final margin = _parse(_marginCtrl.text) ?? 0;
+    final hasInput = margin > 0;
+    final sizing = _sizing(state, request);
+    final canPick = sizing.base != null;
+    final percent = sizing.percentOf(margin);
+    final over = hasInput ? _overLimit(sizing, margin) : null;
     final isLong = _direction.isLong;
     final buyColor = const Color(0xFF26A69A);
     final sellColor = const Color(0xFFEF5350);
@@ -1028,12 +1101,7 @@ class _TradePageState extends State<TradePage> {
                       isDense: true,
                       suffixText: 'USDT',
                     ),
-                    onChanged: (v) => setState(() {
-                      final margin = _parse(v) ?? 0;
-                      _percent = (available ?? 0) > 0
-                          ? (margin / available! * 100).clamp(0, 100).toDouble()
-                          : 0;
-                    }),
+                    onChanged: (_) => setState(() {}),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -1051,24 +1119,20 @@ class _TradePageState extends State<TradePage> {
               children: [
                 Expanded(
                   child: Slider(
-                    value: _percent,
+                    value: percent,
                     min: 0,
                     max: 100,
                     divisions: 100,
-                    label: '${_percent.round()}%',
-                    onChanged: available == null || available <= 0
-                        ? null
-                        : (v) => setState(() {
-                            _percent = v;
-                            _marginCtrl.text = (available * v / 100)
-                                .toStringAsFixed(2);
-                          }),
+                    label: '${percent.round()}%',
+                    onChanged: canPick
+                        ? (v) => setState(() => _applyPercent(sizing, v))
+                        : null,
                   ),
                 ),
                 SizedBox(
                   width: 44,
                   child: Text(
-                    '${_percent.round()}%',
+                    '${percent.round()}%',
                     textAlign: TextAlign.end,
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
@@ -1082,16 +1146,27 @@ class _TradePageState extends State<TradePage> {
                   ActionChip(
                     label: Text('$p%', style: const TextStyle(fontSize: 12)),
                     visualDensity: VisualDensity.compact,
-                    onPressed: available == null || available <= 0
-                        ? null
-                        : () => setState(() {
-                            _percent = p.toDouble();
-                            _marginCtrl.text = (available * p / 100)
-                                .toStringAsFixed(2);
-                          }),
+                    onPressed: canPick
+                        ? () => setState(() => _applyPercent(sizing, p.toDouble()))
+                        : null,
                   ),
               ],
             ),
+            if (_sizingNote(sizing) case final note?)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(note, style: theme.textTheme.bodySmall),
+              ),
+            if (over != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  over,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+              ),
             if (hasInput)
               Padding(
                 padding: const EdgeInsets.only(top: 4),

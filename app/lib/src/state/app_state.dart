@@ -90,6 +90,13 @@ class AppState extends ChangeNotifier {
   AccountAsset? get displayAsset => _snapshot.asset;
   bool get refreshingAsset => _refreshingAccount;
 
+  /// テストで、サーバーから届いたことにする状態を入れる。
+  @visibleForTesting
+  void debugSetSnapshot(BotSnapshot snapshot) {
+    _snapshot = snapshot;
+    notifyListeners();
+  }
+
   /// ボットが管理していない、取引所にある建玉 (手で建てたものなど)。
   List<PositionInfo> get foreignPositions => exchangeOnlyPositions(
     _snapshot.positions,
