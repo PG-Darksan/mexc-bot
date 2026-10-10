@@ -195,7 +195,9 @@ class TradeConditionsSection extends StatelessWidget {
             ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
           ),
           subtitle: Text(
-            config.enabledSides.map((s) => s.direction.label).join(' / '),
+            config.activeLabels.isEmpty
+                ? '全部切ってあります'
+                : config.activeLabels.join(' / '),
             style: Theme.of(context).textTheme.bodySmall,
           ),
           tilePadding: const EdgeInsets.symmetric(horizontal: 16),
@@ -221,18 +223,26 @@ class TradeConditionsSection extends StatelessWidget {
                     ],
                   ),
                   const Divider(height: 24),
-                  // ショートとロングは同じ並びで、広い画面では左右に置く。
+                  // 今までの手法のショートとロングは同じ並びで、広い画面では
+                  // 左右に置く。検証済みの手法はその下。
                   LayoutBuilder(
                     builder: (context, constraints) {
                       final cards = [
                         for (final side in config.enabledSides)
                           _SideConditions(side: side, config: config),
                       ];
-                      if (cards.isEmpty) {
-                        return const Text('ショートもロングも切ってあります。');
+                      final verified = config.verified.enabled
+                          ? _VerifiedConditions(config: config)
+                          : null;
+                      if (cards.isEmpty && verified == null) {
+                        return const Text('どの手法も切ってあります。');
                       }
-                      if (constraints.maxWidth < 560 || cards.length == 1) {
-                        return Column(
+                      final Widget classic;
+                      if (cards.isEmpty) {
+                        classic = const SizedBox.shrink();
+                      } else if (constraints.maxWidth < 560 ||
+                          cards.length == 1) {
+                        classic = Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             for (var i = 0; i < cards.length; i++) ...[
@@ -241,13 +251,24 @@ class TradeConditionsSection extends StatelessWidget {
                             ],
                           ],
                         );
+                      } else {
+                        classic = Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(child: cards[0]),
+                            const SizedBox(width: 16),
+                            Expanded(child: cards[1]),
+                          ],
+                        );
                       }
-                      return Row(
+                      return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(child: cards[0]),
-                          const SizedBox(width: 16),
-                          Expanded(child: cards[1]),
+                          classic,
+                          if (verified != null) ...[
+                            if (cards.isNotEmpty) const Divider(height: 24),
+                            verified,
+                          ],
                         ],
                       );
                     },
@@ -387,7 +408,7 @@ class _SideConditions extends StatelessWidget {
             ),
             const SizedBox(width: 6),
             Text(
-              side.direction.label,
+              '${StrategyKind.classic.label}・${side.direction.label}',
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
                 fontWeight: FontWeight.bold,
                 color: color,
@@ -421,10 +442,9 @@ class _SideConditions extends StatelessWidget {
               '利確',
               'EMA(${side.emaPeriod})乖離 × ${side.takeProfitFactor}',
             ),
-            _Condition(
-              '建玉',
-              '${side.marginPerTradeUsdt} USDT × ${side.leverage} 倍',
-            ),
+            _Condition('建玉', '${_marginLabel(side)} × ${side.leverage} 倍'),
+            if (side.maxHoldHours > 0)
+              _Condition('最長保有', '${side.maxHoldHours} 時間で成行決済'),
             if (side.addOnEnabled)
               _Condition(
                 isShort ? '売り足し' : '買い足し',
@@ -442,6 +462,69 @@ class _SideConditions extends StatelessWidget {
                 '${isShort ? "+" : "-"}${side.bbSigma}σ のバンドより '
                     '${side.bandBreakoutPercent}% 以上外なら RSI を待たずに入る',
               ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// 1 回の証拠金の書き方 (固定額か、資産の割合か)。
+String _marginLabel(SideConfig side) => side.marginByPercent
+    ? '資産の ${side.marginPercent.toStringAsFixed(0)}%'
+    : '${side.marginPerTradeUsdt} USDT';
+
+/// 検証済みの手法の条件をまとめて出す。
+class _VerifiedConditions extends StatelessWidget {
+  const _VerifiedConditions({required this.config});
+
+  final StrategyConfig config;
+
+  @override
+  Widget build(BuildContext context) {
+    final side = config.verified;
+    const color = Colors.teal;
+    final n = config.verifiedMaxOpenPositions;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.verified, size: 16, color: color),
+            const SizedBox(width: 6),
+            Text(
+              '${StrategyKind.verified.label}・${side.direction.label}',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 24,
+          runSpacing: 12,
+          children: [
+            _Condition(
+              '24h出来高',
+              '${formatUsdtCompact(side.minAmount24Usdt)} USDT 以上',
+            ),
+            _Condition(
+              '時間軸',
+              side.timeframes.map((t) => t.label).join(' / '),
+            ),
+            _Condition('RSI(${side.rsiPeriod})', '${side.rsiThreshold} 以下'),
+            _Condition('BB(${side.bbPeriod})', '-${side.bbSigma}σ を下抜け'),
+            _Condition('利確', '入値 + ${side.takeProfitSigma}σ'),
+            _Condition(
+              '損切り',
+              side.stopLossSigma > 0 ? '入値 - ${side.stopLossSigma}σ' : 'なし',
+            ),
+            if (side.maxHoldHours > 0)
+              _Condition('最長保有', '${side.maxHoldHours} 時間で成行決済'),
+            _Condition('同時に持つ数', n > 0 ? '$n 件まで' : '上限なし'),
+            _Condition('建玉', '${_marginLabel(side)} × ${side.leverage} 倍'),
           ],
         ),
       ],

@@ -27,6 +27,8 @@ class StrategyEvaluator {
   int requiredBarsFor(TradeDirection direction) =>
       config.sideOf(direction).requiredBars;
 
+  /// [sideConfig] を渡すと、その条件で判定する (検証済みの手法など)。
+  /// 渡さなければ今までの手法の [direction] の条件。[strategy] は結果に付ける印。
   SignalEvaluation evaluate({
     required String symbol,
     required Timeframe timeframe,
@@ -36,8 +38,10 @@ class StrategyEvaluator {
     TickerSnapshot? ticker,
     FundingInfo? funding,
     DateTime? now,
+    SideConfig? sideConfig,
+    StrategyKind strategy = StrategyKind.classic,
   }) {
-    final side = config.sideOf(direction);
+    final side = sideConfig ?? config.sideOf(direction);
     final closes = series.closes;
     final barOpenTime = series.last?.openTime ?? 0;
     final amount24 = ticker?.amount24 ?? 0;
@@ -75,6 +79,7 @@ class StrategyEvaluator {
       fundingIntervalHours: funding?.collectCycleHours,
       barOpenTime: barOpenTime,
       rejectReason: reason,
+      strategy: strategy,
     );
 
     if (closes.length < side.requiredBars) {

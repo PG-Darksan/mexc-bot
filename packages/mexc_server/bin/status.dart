@@ -65,7 +65,7 @@ void _printSnapshot(BotSnapshot s, int top) {
     ..writeln('─' * 96)
     ..writeln(
       '状態: ${s.running ? "稼働中" : "停止中"}'
-      '  [${s.config.enabledSides.map((e) => e.direction.label).join("/")}]'
+      '  [${s.config.activeLabels.join("/")}]'
       '  相場データ: ${s.wsConnected ? "接続中" : "未接続"}'
       '  監視: ${s.watchedSymbolCount}銘柄 / ${s.subscriptionCount}系列'
       '${s.pendingHistoryCount > 0 ? "  履歴待ち: ${s.pendingHistoryCount}系列" : ""}',

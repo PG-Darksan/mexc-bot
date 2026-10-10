@@ -201,7 +201,7 @@ class BotEngine {
 
     _running = true;
     _lastError = null;
-    final sides = _config.enabledSides.map((s) => s.direction.label).join(' / ');
+    final sides = _config.activeLabels.join(' / ');
     _log(BotEvent.info('ボットを起動しました (実発注: $sides)'));
     if (!_rest.hasCredentials) {
       _log(BotEvent.warning(
@@ -356,7 +356,8 @@ class BotEngine {
 
   List<SignalEvaluation> _evaluateAll() {
     final evaluator = StrategyEvaluator(_config);
-    final sides = _config.enabledSides;
+    // 今までの手法の向きと、検証済みの手法。同じ足を両方の条件で見る。
+    final sides = _config.activeSides;
     final out = <SignalEvaluation>[];
     if (sides.isEmpty) return out;
 
@@ -368,8 +369,8 @@ class BotEngine {
       for (final tf in _config.timeframes) {
         final series = _feed.seriesOf(symbol, tf);
         if (series == null) continue;
-        for (final side in sides) {
-          // 時間軸は方向ごとに選べる。その方向が見ない足は評価しない。
+        for (final (kind, side) in sides) {
+          // 時間軸は手法・方向ごとに選べる。見ない足は評価しない。
           if (!side.timeframes.contains(tf)) continue;
           final evaluation = evaluator.evaluate(
             symbol: symbol,
@@ -379,6 +380,8 @@ class BotEngine {
             contract: contract,
             ticker: ticker,
             funding: funding,
+            sideConfig: side,
+            strategy: kind,
           );
           out.add(_applyPortfolioFilters(evaluation));
         }
@@ -398,7 +401,8 @@ class BotEngine {
       // すでに建玉がある銘柄には、向きが同じでも違っても新規は出さない。
       // 出すのは利確 (決済) だけ。
       reason = RejectReason.alreadyHolding;
-    } else if (atPositionLimit) {
+    } else if (atPositionLimit ||
+        (evaluation.strategy == StrategyKind.verified && verifiedAtLimit)) {
       reason = RejectReason.maxPositions;
     } else {
       final until = _cooldownUntil[evaluation.symbol];
@@ -431,16 +435,30 @@ class BotEngine {
     return held.length >= limit;
   }
 
+  /// 検証済みの手法の上限 ([StrategyConfig.verifiedMaxOpenPositions]) に
+  /// 達しているか。この手法で建てた建玉 (発注直後の物も) だけを数える。
+  bool get verifiedAtLimit {
+    final limit = _config.verifiedMaxOpenPositions;
+    if (limit <= 0) return false;
+    final count = _positions.values
+        .where((p) => p.strategy == StrategyKind.verified)
+        .length;
+    return count >= limit;
+  }
+
   Future<void> _handleSignal(SignalEvaluation evaluation) async {
     final contract = _feed.contractOf(evaluation.symbol);
     if (contract == null) return;
 
-    // 同じサイクルで別の時間軸や反対方向が先に建てている場合があるので、
-    // 発注の直前にもう一度見る。上限も同じサイクルの発注で埋まることがある。
+    // 同じサイクルで別の時間軸や反対方向・別の手法が先に建てている場合が
+    // あるので、発注の直前にもう一度見る。上限も同じサイクルの発注で埋まる
+    // ことがある。
     if (isHolding(evaluation.symbol)) return;
     if (atPositionLimit) return;
+    final byVerified = evaluation.strategy == StrategyKind.verified;
+    if (byVerified && verifiedAtLimit) return;
 
-    final side = _config.sideOf(evaluation.direction);
+    final side = _config.sideFor(evaluation.strategy, evaluation.direction);
     final isShort = evaluation.direction.isShort;
     final band = evaluation.bbBoundary;
     final sigmaLabel = '${isShort ? "+" : "-"}${side.bbSigma}σ';
@@ -453,6 +471,7 @@ class BotEngine {
             '${isShort ? "上抜け" : "下抜け"}';
     _log(
       BotEvent.trade(
+        '${byVerified ? "[検証済み] " : ""}'
         '${evaluation.symbol} ${evaluation.timeframe.label} '
         '${evaluation.direction.label}シグナル検知 '
         '価格 ${evaluation.price} / $detail / '
@@ -475,6 +494,7 @@ class BotEngine {
         contract: contract,
         config: _config,
         availableUsdt: _asset?.availableBalance,
+        equityUsdt: _asset?.equity,
       );
       _positions[position.id] = position;
       // 取引所の一覧に載るまでの間も、同じ銘柄へ重ねて出さないようにする。

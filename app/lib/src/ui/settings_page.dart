@@ -12,8 +12,9 @@ import '../state/app_state.dart';
 /// 売買条件と接続設定をまとめて編集する画面。
 ///
 /// 項目ごとに枠を分けず、1 つの枠の中に見出しで区切って並べる。
-/// 向きで分けるのは建てるか・出来高の下限・RSI の閾値だけで、他の項目は
-/// ショートとロングに同じ値を入れる。指標の期間は BB20・RSI7・EMA5 で固定。
+/// 手法は「今までの手法」と「検証済みの手法」に分けて並べ、同時に使える。
+/// 今までの手法で向きで分けるのは建てるか・出来高の下限・RSI の閾値だけで、
+/// 他の項目はショートとロングに同じ値を入れる。指標の期間は BB20・RSI7・EMA5 で固定。
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
 
@@ -71,18 +72,24 @@ class _SettingsPageState extends State<SettingsPage> {
   void _updateBoth(SideConfig Function(SideConfig) change) =>
       _update((c) => c.withSide(change(c.short)).withSide(change(c.long)));
 
+  /// 検証済みの手法の条件を変える。
+  void _updateVerified(SideConfig Function(SideConfig) change) =>
+      _update((c) => c.copyWith(verified: change(c.verified)));
+
   /// 画面で扱える形に揃える。
   ///
-  /// 向きで分けない項目は代表の向きの値を両方に入れ、指標の期間は固定値に
-  /// する。使わない 1 分足と 8 時間足は外す。
+  /// 今までの手法で向きで分けない項目は代表の向きの値を両方に入れ、利確は
+  /// EMA の戻りにする (σ の倍数の利確・損切りは検証済みの手法の物)。指標の
+  /// 期間は固定値にし、使わない 1 分足と 8 時間足は外す。
   static StrategyConfig _normalize(StrategyConfig c) {
     const fixed = SideConfig.short();
     final from = c.primarySide;
+    List<Timeframe> choices(List<Timeframe> tfs) => [
+      for (final t in tfs)
+        if (timeframeChoices.contains(t)) t,
+    ];
     SideConfig shared(SideConfig x) => x.copyWith(
-      timeframes: [
-        for (final t in from.timeframes)
-          if (timeframeChoices.contains(t)) t,
-      ],
+      timeframes: choices(from.timeframes),
       bbPeriod: fixed.bbPeriod,
       rsiPeriod: fixed.rsiPeriod,
       emaPeriod: fixed.emaPeriod,
@@ -90,6 +97,8 @@ class _SettingsPageState extends State<SettingsPage> {
       bbSigma: from.bbSigma,
       leverage: from.leverage,
       marginPerTradeUsdt: from.marginPerTradeUsdt,
+      marginByPercent: from.marginByPercent,
+      marginPercent: from.marginPercent,
       takeProfitFactor: from.takeProfitFactor,
       minTakeProfitPercent: from.minTakeProfitPercent,
       bandBreakoutEntryEnabled: from.bandBreakoutEntryEnabled,
@@ -99,22 +108,50 @@ class _SettingsPageState extends State<SettingsPage> {
       addOnEnabled: from.addOnEnabled,
       addOnLossPercent: from.addOnLossPercent,
       addOnBudgetPercent: from.addOnBudgetPercent,
-      exitMode: from.exitMode,
-      takeProfitSigma: from.takeProfitSigma,
-      stopLossSigma: from.stopLossSigma,
+      exitMode: ExitMode.emaRatio,
       maxHoldHours: from.maxHoldHours,
     );
-    return c.withSide(shared(c.short)).withSide(shared(c.long));
+    final v = c.verified;
+    return c.withSide(shared(c.short)).withSide(shared(c.long)).copyWith(
+      verified: v.copyWith(
+        timeframes: choices(v.timeframes),
+        bbPeriod: fixed.bbPeriod,
+        rsiPeriod: fixed.rsiPeriod,
+        emaPeriod: fixed.emaPeriod,
+      ),
+    );
   }
 
-  /// 検証済みの設定を下書きに入れる。保存するまでは反映しない。
+  /// 検証済みの手法の条件を、検証した値に戻す (下書きだけ。保存するまでは
+  /// 反映しない)。使うか・証拠金・レバレッジは今の値を残す。
   void _applyVerifiedPreset() {
     setState(() => _draft = _normalize(draft.withVerifiedPreset()));
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('検証済みの設定を入れました。「保存して反映」を押すとボットに反映されます。'),
+        content: Text('検証済みの手法を、検証した値に戻しました。「保存して反映」を押すとボットに反映されます。'),
       ),
     );
+  }
+
+  /// 検証済みの手法が何をするかを、今の値で言葉にする。
+  String _verifiedHint() {
+    final v = draft.verified;
+    final tfs = v.timeframes.map((t) => t.label).join('・');
+    final n = draft.verifiedMaxOpenPositions;
+    final sl = v.stopLossSigma > 0
+        ? '${_trimNumber(v.stopLossSigma)} 倍下がったら損を確定 (損切り) します'
+        : '損切りは置きません';
+    return '・買い (ロング) だけです。\n'
+        '・${tfs.isEmpty ? '選んだ時間足' : tfs}で、値段がボリンジャーバンドの '
+        '-${_trimNumber(v.bbSigma)}σ (いつもの値動きから大きく下に外れた所) まで'
+        '下がり、RSI(7) が ${_trimNumber(v.rsiThreshold)} 以下 (極端な売られすぎ) '
+        'の時に買います。\n'
+        '・買った値段より σ の ${_trimNumber(v.takeProfitSigma)} 倍上がったら'
+        '利益を確定 (利確) し、$sl。σ はボリンジャーバンドの 1 目盛りの幅で、'
+        '買った時の値で決まります。注文は買うと同時に取引所に置きます。\n'
+        '${v.maxHoldHours > 0 ? '・${v.maxHoldHours} 時間たってもどちらにも届かなければ、その時の値段で売って終わります。\n' : ''}'
+        '・同時に持つのは ${n > 0 ? '$n 銘柄まで' : '上限なし'}です。'
+        '買い足しはしません。';
   }
 
   /// 保存する画面設定を組む。
@@ -209,6 +246,8 @@ class _SettingsPageState extends State<SettingsPage> {
     // 向きで分けない項目の値 (両方に同じ値が入っている)。
     final shared = draft.primarySide;
     final pushTopic = state.snapshot.pushTopic;
+    // 証拠金を割合で決めるときに、今いくらになるかの目安に使う。
+    final equity = state.snapshot.asset?.equity;
 
     return Column(
       children: [
@@ -220,37 +259,11 @@ class _SettingsPageState extends State<SettingsPage> {
               _Frame(
                 groups: [
                   _Group(
-                    title: '検証済みの設定',
+                    title: '今までの手法 (EMA の戻りで利確)',
                     description:
-                        '1 年分の検証で、前半・後半とも黒字だった設定です '
-                        '(research/strategy_search_report.md)。',
-                    children: [
-                      const _Hint(
-                        'ロングだけ。15 分足で -4σ に触れ、RSI(7) が 5 以下なら買います。'
-                        '利確は入値 +3σ、損切りは入値 -3σ、12 時間で決まらなければ'
-                        '成行で閉じます。同時に持つのは 10 件までです。'
-                        '証拠金とレバレッジは今の値のままです。'
-                        'ショートは切ります (12 時間以内に閉じる条件では、黒字になる'
-                        '組み合わせがありませんでした)。',
-                      ),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: FilledButton.tonalIcon(
-                          onPressed: _applyVerifiedPreset,
-                          icon: const Icon(Icons.auto_fix_high, size: 16),
-                          label: const Text(
-                            'この設定を入れる',
-                            style: TextStyle(fontSize: 12),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  _Group(
-                    title: 'ショートとロングの条件',
-                    description:
-                        '向きで分けるのは、建てるか・出来高の下限・RSI の閾値だけです。'
+                        'BB(20) の ±σ のバンドを抜けて RSI(7) が閾値に届いたら逆張りで'
+                        '入り、EMA(5) へ戻る途中で利確します。損切りは置きません。'
+                        '向きで分けるのは、建てるか・出来高の下限・RSI の閾値だけで、'
                         '他は両方に同じ値を使います。',
                     children: [
                       _PairSwitch(
@@ -318,56 +331,28 @@ class _SettingsPageState extends State<SettingsPage> {
                         onChanged: (v) =>
                             _updateBoth((x) => x.copyWith(leverage: v.toInt())),
                       ),
-                      _SharedField(
-                        title: '1 回の証拠金',
-                        suffix: 'USDT',
-                        value: shared.marginPerTradeUsdt,
-                        onChanged: (v) => _updateBoth(
-                          (x) => x.copyWith(marginPerTradeUsdt: v),
-                        ),
-                      ),
-                      _CompactSwitch(
-                        label: '利確・損切りを σ の倍数で決める',
-                        value: shared.exitMode == ExitMode.sigma,
-                        onChanged: (v) => _updateBoth(
+                      _MarginSetting(
+                        side: shared,
+                        equity: equity,
+                        onChanged: (n) => _updateBoth(
                           (x) => x.copyWith(
-                            exitMode: v ? ExitMode.sigma : ExitMode.emaRatio,
+                            marginPerTradeUsdt: n.marginPerTradeUsdt,
+                            marginByPercent: n.marginByPercent,
+                            marginPercent: n.marginPercent,
                           ),
                         ),
                       ),
-                      if (shared.exitMode == ExitMode.sigma) ...[
-                        _SharedField(
-                          title: '利確 (入値から)',
-                          suffix: 'σ',
-                          value: shared.takeProfitSigma,
-                          onChanged: (v) =>
-                              _updateBoth((x) => x.copyWith(takeProfitSigma: v)),
+                      _SharedField(
+                        title: '利確の係数',
+                        value: shared.takeProfitFactor,
+                        onChanged: (v) => _updateBoth(
+                          (x) => x.copyWith(takeProfitFactor: v),
                         ),
-                        _SharedField(
-                          title: '損切り (入値から)',
-                          suffix: 'σ',
-                          value: shared.stopLossSigma,
-                          onChanged: (v) =>
-                              _updateBoth((x) => x.copyWith(stopLossSigma: v)),
-                        ),
-                        const _Hint(
-                          'σ は検知した瞬間の BB(20) の 1σ の幅です。ロングなら入値 + 利確 σ'
-                          ' で利確、入値 - 損切り σ で損切りします (ショートは逆)。'
-                          '損切りを 0 にすると置きません。どちらも発注と同時に取引所へ預けます。',
-                        ),
-                      ] else ...[
-                        _SharedField(
-                          title: '利確の係数',
-                          value: shared.takeProfitFactor,
-                          onChanged: (v) => _updateBoth(
-                            (x) => x.copyWith(takeProfitFactor: v),
-                          ),
-                        ),
-                        const _Hint(
-                          '行き過ぎた分の内、この割合だけ戻った所で利確します'
-                          ' (0.5 なら半分)。0 より大きく 1 未満。損切りは置きません。',
-                        ),
-                      ],
+                      ),
+                      const _Hint(
+                        '行き過ぎた分の内、この割合だけ戻った所で利確します'
+                        ' (0.5 なら半分)。0 より大きく 1 未満。損切りは置きません。',
+                      ),
                       _SharedField(
                         title: '最長保有時間',
                         suffix: '時間',
@@ -460,7 +445,137 @@ class _SettingsPageState extends State<SettingsPage> {
                           '建てた直後、残っている USDT のこの割合を証拠金にして、含み損が'
                           'この % になる価格に同じ向きの指値を置きます。約定すると平均建値が'
                           '有利な側に寄ります (利確の目標は動かしません)。指値の分の資金は'
-                          '凍結されるので、100% にすると次の銘柄に回す資金が無くなります。',
+                          '凍結されるので、100% にすると次の銘柄に回す資金が無くなります'
+                          ' (検証済みの手法にも回せなくなります)。',
+                        ),
+                      ],
+                    ],
+                  ),
+
+                  _Group(
+                    title: '検証済みの手法 (σ で利確と損切り)',
+                    description:
+                        '過去 1 年の値動きで試して、前の半年・後の半年のどちらも利益が出た'
+                        '手法です。今までの手法と同時に使えます (同じ銘柄に両方から重ねて'
+                        '建てることはしません)。',
+                    children: [
+                      _CompactSwitch(
+                        label: 'この手法を使う',
+                        value: draft.verified.enabled,
+                        onChanged: (v) =>
+                            _updateVerified((x) => x.copyWith(enabled: v)),
+                      ),
+                      _Hint(_verifiedHint()),
+                      if (draft.verified.enabled) ...[
+                        _SharedTimeframes(
+                          value: draft.verified.timeframes,
+                          onChanged: (v) =>
+                              _updateVerified((x) => x.copyWith(timeframes: v)),
+                        ),
+                        _TwoFields(
+                          left: _NumberField(
+                            label: 'σ 倍率 (下抜け)',
+                            suffix: 'σ',
+                            value: draft.verified.bbSigma,
+                            dense: true,
+                            onChanged: (v) =>
+                                _updateVerified((x) => x.copyWith(bbSigma: v)),
+                          ),
+                          right: _NumberField(
+                            label: 'RSI(7) の閾値',
+                            suffix: '以下',
+                            value: draft.verified.rsiThreshold,
+                            dense: true,
+                            onChanged: (v) => _updateVerified(
+                              (x) => x.copyWith(rsiThreshold: v),
+                            ),
+                          ),
+                        ),
+                        _TwoFields(
+                          left: _NumberField(
+                            label: '利確 (入値から)',
+                            suffix: 'σ',
+                            value: draft.verified.takeProfitSigma,
+                            dense: true,
+                            onChanged: (v) => _updateVerified(
+                              (x) => x.copyWith(takeProfitSigma: v),
+                            ),
+                          ),
+                          right: _NumberField(
+                            label: '損切り (入値から)',
+                            suffix: 'σ',
+                            value: draft.verified.stopLossSigma,
+                            dense: true,
+                            onChanged: (v) => _updateVerified(
+                              (x) => x.copyWith(stopLossSigma: v),
+                            ),
+                          ),
+                        ),
+                        _TwoFields(
+                          left: _NumberField(
+                            label: '最長保有時間',
+                            suffix: '時間',
+                            integer: true,
+                            value: draft.verified.maxHoldHours.toDouble(),
+                            dense: true,
+                            onChanged: (v) => _updateVerified(
+                              (x) => x.copyWith(maxHoldHours: v.toInt()),
+                            ),
+                          ),
+                          right: _NumberField(
+                            label: '同時に持つ数',
+                            suffix: '件まで',
+                            integer: true,
+                            value: draft.verifiedMaxOpenPositions.toDouble(),
+                            dense: true,
+                            onChanged: (v) => _update(
+                              (c) => c.copyWith(
+                                verifiedMaxOpenPositions: v.toInt(),
+                              ),
+                            ),
+                          ),
+                        ),
+                        _TwoFields(
+                          left: _NumberField(
+                            label: '24 時間出来高の下限',
+                            suffix: 'M USDT',
+                            value: draft.verified.minAmount24Usdt / 1000000,
+                            dense: true,
+                            onChanged: (v) => _updateVerified(
+                              (x) => x.copyWith(minAmount24Usdt: v * 1000000),
+                            ),
+                          ),
+                          right: _NumberField(
+                            label: 'レバレッジ',
+                            suffix: '倍',
+                            integer: true,
+                            value: draft.verified.leverage.toDouble(),
+                            dense: true,
+                            onChanged: (v) => _updateVerified(
+                              (x) => x.copyWith(leverage: v.toInt()),
+                            ),
+                          ),
+                        ),
+                        const _Hint(
+                          '損切りを 0 にすると置きません。最長保有時間を 0 にすると時間では'
+                          '決済しません (ボットを止めている間は閉じません)。同時に持つ数は'
+                          'この手法で建てた物だけを数えます (0 なら上限なし)。',
+                        ),
+                        _MarginSetting(
+                          side: draft.verified,
+                          equity: equity,
+                          onChanged: (n) => _updateVerified((_) => n),
+                        ),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            onPressed: _applyVerifiedPreset,
+                            icon: const Icon(Icons.restart_alt, size: 16),
+                            label: const Text(
+                              '検証した値に戻す',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
                         ),
                       ],
                     ],
@@ -512,7 +627,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                       ),
                       const _Hint(
-                        '0 なら上限なし。手で建てたものも数えます。'
+                        '0 なら上限なし。どちらの手法で建てた物も、手で建てた物も数えます。'
                         'ポジションを持っている銘柄は、持っている間は 1 回だけ発火します'
                         ' (重ねて建てません)。決済後は「再エントリー待ち」を過ぎれば、'
                         '同じ足でももう一度入ります。\n'
@@ -895,6 +1010,103 @@ class _SharedField extends StatelessWidget {
         integer: integer,
         dense: true,
         onChanged: onChanged,
+      ),
+    );
+  }
+}
+
+/// 2 つの入力欄を横に並べる。
+class _TwoFields extends StatelessWidget {
+  const _TwoFields({required this.left, required this.right});
+
+  final Widget left;
+  final Widget right;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: left),
+        const SizedBox(width: 8),
+        Expanded(child: right),
+      ],
+    );
+  }
+}
+
+/// 1 回の証拠金。固定額 (USDT) か、資産の割合 (スライダー) で決める。
+class _MarginSetting extends StatelessWidget {
+  const _MarginSetting({
+    required this.side,
+    required this.equity,
+    required this.onChanged,
+  });
+
+  final SideConfig side;
+
+  /// 今の資産 (USDT)。割合のとき、いくらになるかの目安を出す。分からなければ null。
+  final double? equity;
+
+  /// 証拠金の項目だけを変えた条件を返す。
+  final ValueChanged<SideConfig> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final percent = side.marginPercent.clamp(1.0, 100.0).toDouble();
+    final e = equity;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _CompactSwitch(
+            label: '1 回の証拠金を資産の割合で決める',
+            value: side.marginByPercent,
+            onChanged: (v) => onChanged(side.copyWith(marginByPercent: v)),
+          ),
+          if (side.marginByPercent) ...[
+            Row(
+              children: [
+                Text(
+                  '1 回の証拠金: 資産の ${percent.toStringAsFixed(0)}%',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const Spacer(),
+                if (e != null && e > 0)
+                  Text(
+                    '今なら約 ${(e * percent / 100).toStringAsFixed(2)} USDT',
+                    style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
+                  ),
+              ],
+            ),
+            Slider(
+              value: percent,
+              min: 1,
+              max: 100,
+              divisions: 99,
+              label: '${percent.toStringAsFixed(0)}%',
+              onChanged: (v) =>
+                  onChanged(side.copyWith(marginPercent: v.roundToDouble())),
+            ),
+            const _Hint(
+              '資産は口座の USDT の合計 (建玉の証拠金や含み損益も含む) です。'
+              'その銘柄で持てる建玉の上限が資産より小さい時は、上限に対する割合に'
+              'します (後で買い足せる余地を残すため)。使える残高を超える分は建てません。',
+            ),
+          ] else
+            _NumberField(
+              label: '1 回の証拠金',
+              suffix: 'USDT',
+              value: side.marginPerTradeUsdt,
+              dense: true,
+              onChanged: (v) => onChanged(side.copyWith(marginPerTradeUsdt: v)),
+            ),
+        ],
       ),
     );
   }

@@ -21,6 +21,7 @@ class HeldView {
     this.addOn,
     this.liquidation,
     this.managed = true,
+    this.strategy = StrategyKind.classic,
   });
 
   factory HeldView.managed(ManagedPosition p) => HeldView(
@@ -33,6 +34,7 @@ class HeldView {
     takeProfit: p.takeProfitPrice,
     stopLoss: p.stopLossPrice,
     addOn: p.hasPendingAddOn ? p.addOnPrice : null,
+    strategy: p.strategy,
   );
 
   /// ボットが管理していない取引所の建玉。利確の位置はボットが知らない。
@@ -61,6 +63,9 @@ class HeldView {
 
   /// ボットが建てて管理している建玉か。
   final bool managed;
+
+  /// どの手法で建てたか (指標の期間を合わせるのに使う)。手の建玉は今までの手法。
+  final StrategyKind strategy;
 }
 
 /// 保有中の建玉 1 つ分のチャート。ホームに建玉の数だけ並べる。
@@ -141,7 +146,7 @@ class _HeldPositionChartState extends State<HeldPositionChart> {
     final theme = Theme.of(context);
     final settings = AppScope.of(context).settings;
     final p = widget.position;
-    final side = widget.config.sideOf(p.direction);
+    final side = widget.config.sideFor(p.strategy, p.direction);
     final isShort = p.direction.isShort;
     final mark =
         widget.markPrice ?? (_candles.isEmpty ? null : _candles.last.close);

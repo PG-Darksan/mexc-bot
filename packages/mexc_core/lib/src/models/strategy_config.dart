@@ -38,6 +38,23 @@ enum TradeDirection {
       positionType == 1 ? TradeDirection.long : TradeDirection.short;
 }
 
+/// 売買の手法。今までの手法と検証済みの手法は、同時に動かせる。
+enum StrategyKind {
+  /// BB の σ と RSI で逆張りに入り、EMA への戻りで利確する (今までの手法)。
+  classic('今までの手法'),
+
+  /// 1 年分の検証で前半・後半とも黒字だった手法。15 分足 -4σ・RSI 5 以下で
+  /// 買い、σ の倍数で利確と損切りを置く。
+  verified('検証済みの手法');
+
+  const StrategyKind(this.label);
+
+  final String label;
+
+  static StrategyKind fromName(String? name) => StrategyKind.values
+      .firstWhere((e) => e.name == name, orElse: () => StrategyKind.classic);
+}
+
 /// 利確 (と損切り) の決め方。
 enum ExitMode {
   /// 検知した瞬間の EMA からの乖離に係数を掛けた分だけ戻した所で利確する。
@@ -77,6 +94,8 @@ class SideConfig {
     this.bbSigma = 4.0,
     this.leverage = 1,
     this.marginPerTradeUsdt = 10,
+    this.marginByPercent = false,
+    this.marginPercent = 10.0,
     this.takeProfitFactor = 0.5,
     this.minTakeProfitPercent = 0.3,
     this.maxFundingBurdenPercent = 0.1,
@@ -98,6 +117,29 @@ class SideConfig {
   /// ロングの既定値。ショートを鏡写しにした値で揃えてある。
   const SideConfig.long()
       : this(direction: TradeDirection.long, rsiThreshold: 3.0);
+
+  /// 検証済みの手法の値 (research/report.md の 5.2)。
+  ///
+  /// ロングだけ。15 分足で -4σ に触れ、RSI(7) が 5 以下なら買う。利確は
+  /// 入値 +3σ、損切りは入値 -3σ、12 時間で決まらなければ成行で閉じる。
+  /// 買い足しと、RSI を待たない飛び出しの入り方は使わない (検証していない)。
+  /// 証拠金は資産の 5% (同時 10 件まで持っても資産の半分)。
+  const SideConfig.verified()
+      : this(
+          direction: TradeDirection.long,
+          enabled: false,
+          minAmount24Usdt: 1000000,
+          timeframes: const [Timeframe.m15],
+          rsiThreshold: 5.0,
+          bbSigma: 4.0,
+          bandBreakoutEntryEnabled: false,
+          exitMode: ExitMode.sigma,
+          takeProfitSigma: 3.0,
+          stopLossSigma: 3.0,
+          maxHoldHours: 12,
+          marginByPercent: true,
+          marginPercent: 5.0,
+        );
 
   /// 時間軸の既定値。
   static const List<Timeframe> defaultTimeframes = [
@@ -145,8 +187,21 @@ class SideConfig {
   /// レバレッジ。
   final int leverage;
 
-  /// 1 回のエントリーに使う証拠金 (USDT)。
+  /// 1 回のエントリーに使う証拠金 (USDT)。[marginByPercent] が切ってあるときに使う。
   final double marginPerTradeUsdt;
+
+  /// 1 回の証拠金を、資産の割合 ([marginPercent]) で決めるか。
+  ///
+  /// 切っていれば [marginPerTradeUsdt] の固定額で建てる。
+  final bool marginByPercent;
+
+  /// [marginByPercent] のとき、1 回の証拠金にする資産の割合 (%)。
+  ///
+  /// 資産は口座の USDT の合計 (建玉の証拠金や含み損益も含む)。その銘柄で
+  /// 持てる建玉の上限が資産より小さい時は、その上限に対する割合にする
+  /// (取引画面の「何 %」と同じ。後で買い足せる余地を残すため)。
+  /// 使える残高を超える分は建てない。
+  final double marginPercent;
 
   /// 検知時の EMA からの乖離率に掛ける係数。既定 0.5。
   final double takeProfitFactor;
@@ -237,6 +292,8 @@ class SideConfig {
     bbSigma: bbSigma,
     leverage: leverage,
     marginPerTradeUsdt: marginPerTradeUsdt,
+    marginByPercent: marginByPercent,
+    marginPercent: marginPercent,
     takeProfitFactor: takeProfitFactor,
     minTakeProfitPercent: minTakeProfitPercent,
     maxFundingBurdenPercent: maxFundingBurdenPercent,
@@ -252,10 +309,11 @@ class SideConfig {
     maxHoldHours: maxHoldHours,
   );
 
-  /// この方向の設定に問題があれば日本語で返す。
-  List<String> validate() {
+  /// この方向の設定に問題があれば日本語で返す。[name] はメッセージの頭に
+  /// 付ける名前 (既定は向きの名前)。
+  List<String> validate({String? name}) {
     final errors = <String>[];
-    final name = direction.label;
+    name ??= direction.label;
     if (timeframes.isEmpty) {
       errors.add('$name: 時間軸が 1 つも選ばれていません。');
     }
@@ -273,7 +331,11 @@ class SideConfig {
       errors.add('$name: RSI閾値は 0 より大きく 100 以下にして下さい。');
     }
     if (leverage < 1) errors.add('$name: レバレッジは 1 以上にして下さい。');
-    if (marginPerTradeUsdt <= 0) {
+    if (marginByPercent) {
+      if (marginPercent <= 0 || marginPercent > 100) {
+        errors.add('$name: 証拠金の資産に対する割合は 0 より大きく 100 以下にして下さい。');
+      }
+    } else if (marginPerTradeUsdt <= 0) {
       errors.add('$name: 1回あたりの証拠金は 0 より大きい値にして下さい。');
     }
     if (takeProfitFactor <= 0 || takeProfitFactor >= 1) {
@@ -324,6 +386,8 @@ class SideConfig {
     double? bbSigma,
     int? leverage,
     double? marginPerTradeUsdt,
+    bool? marginByPercent,
+    double? marginPercent,
     double? takeProfitFactor,
     double? minTakeProfitPercent,
     double? maxFundingBurdenPercent,
@@ -350,6 +414,8 @@ class SideConfig {
     bbSigma: bbSigma ?? this.bbSigma,
     leverage: leverage ?? this.leverage,
     marginPerTradeUsdt: marginPerTradeUsdt ?? this.marginPerTradeUsdt,
+    marginByPercent: marginByPercent ?? this.marginByPercent,
+    marginPercent: marginPercent ?? this.marginPercent,
     takeProfitFactor: takeProfitFactor ?? this.takeProfitFactor,
     minTakeProfitPercent: minTakeProfitPercent ?? this.minTakeProfitPercent,
     maxFundingBurdenPercent:
@@ -381,6 +447,8 @@ class SideConfig {
     'bbSigma': bbSigma,
     'leverage': leverage,
     'marginPerTradeUsdt': marginPerTradeUsdt,
+    'marginByPercent': marginByPercent,
+    'marginPercent': marginPercent,
     'takeProfitFactor': takeProfitFactor,
     'minTakeProfitPercent': minTakeProfitPercent,
     'maxFundingBurdenPercent': maxFundingBurdenPercent,
@@ -396,13 +464,14 @@ class SideConfig {
     'maxHoldHours': maxHoldHours,
   };
 
+  /// [defaults] は保存データに無い項目に入れる値 (既定は向きごとの既定値)。
   factory SideConfig.fromJson(
     Map<String, dynamic> json, {
     required TradeDirection direction,
+    SideConfig? defaults,
   }) {
-    final fallback = direction.isShort
-        ? const SideConfig.short()
-        : const SideConfig.long();
+    final fallback = defaults ??
+        (direction.isShort ? const SideConfig.short() : const SideConfig.long());
     double d(String k, double f) => (json[k] as num?)?.toDouble() ?? f;
     int i(String k, int f) => (json[k] as num?)?.toInt() ?? f;
     bool b(String k, bool f) => json[k] as bool? ?? f;
@@ -425,6 +494,9 @@ class SideConfig {
       bbSigma: d('bbSigma', fallback.bbSigma),
       leverage: i('leverage', fallback.leverage),
       marginPerTradeUsdt: d('marginPerTradeUsdt', fallback.marginPerTradeUsdt),
+      // 割合で決める項目が入る前の保存データは、今までどおり固定額で読む。
+      marginByPercent: b('marginByPercent', fallback.marginByPercent),
+      marginPercent: d('marginPercent', fallback.marginPercent),
       takeProfitFactor: d('takeProfitFactor', fallback.takeProfitFactor),
       minTakeProfitPercent:
           d('minTakeProfitPercent', fallback.minTakeProfitPercent),
@@ -466,14 +538,30 @@ class StrategyConfig {
   const StrategyConfig({
     this.short = const SideConfig.short(),
     this.long = const SideConfig.long(),
+    this.verified = const SideConfig.verified(),
+    this.verifiedMaxOpenPositions = 10,
     this.evaluationIntervalSeconds = 60,
     this.reentryCooldownMinutes = 60,
     this.maxOpenPositions = 0,
   });
 
-  // ── 方向ごとの条件 ──────────────────────────────────────────
+  // ── 今までの手法 (方向ごとの条件) ─────────────────────────────
   final SideConfig short;
   final SideConfig long;
+
+  // ── 検証済みの手法 ──────────────────────────────────────────
+  /// 検証済みの手法の条件 (ロングだけ・σ の倍数で利確と損切り)。
+  ///
+  /// 使うかどうかは [SideConfig.enabled] で決める。今までの手法 ([short] /
+  /// [long]) と同時に動かせる。同じ銘柄に両方から重ねて建てることはしない
+  /// (一方向モードでは同じ銘柄の建玉が 1 つにまとまるため)。
+  final SideConfig verified;
+
+  /// 検証済みの手法で同時に持つ建玉の上限。0 なら上限なし。
+  ///
+  /// 全体の上限 [maxOpenPositions] とは別に、この手法で建てた物だけを数える。
+  /// 相場全体の急落で、多くの銘柄を一度に買わないため (検証は 10 件まで)。
+  final int verifiedMaxOpenPositions;
 
   // ── 運用 ────────────────────────────────────────────────────
   /// 判定の実行間隔 (秒)。既定 60 秒。進行中の足も含めて毎回評価する。
@@ -513,18 +601,36 @@ class StrategyConfig {
   /// 同じ銘柄に反対向きの建玉を同時に持つことはないので、ヘッジは使わない。
   int get positionModeValue => 2;
 
+  /// 今までの手法の、その向きの条件。
   SideConfig sideOf(TradeDirection direction) =>
       direction.isShort ? short : long;
 
-  /// 新規建てを行う方向。両方切っていれば空。
+  /// その手法・向きで建てるときの条件。
+  SideConfig sideFor(StrategyKind kind, TradeDirection direction) =>
+      kind == StrategyKind.verified ? verified : sideOf(direction);
+
+  /// 今までの手法で新規建てを行う方向。両方切っていれば空。
   List<SideConfig> get enabledSides =>
       [short, long].where((s) => s.enabled).toList(growable: false);
 
-  /// 銘柄と足を集めるときに見る方向。
+  /// 新規建てに使う (手法, 条件) の組。今までの手法の入っている向きと、
+  /// 入っていれば検証済みの手法。
+  List<(StrategyKind, SideConfig)> get activeSides => [
+    for (final s in enabledSides) (StrategyKind.classic, s),
+    if (verified.enabled) (StrategyKind.verified, verified),
+  ];
+
+  /// 動かしている手法の名前 (画面やログに出す)。何も無ければ空。
+  List<String> get activeLabels => [
+    for (final (kind, side) in activeSides)
+      kind == StrategyKind.verified ? kind.label : side.direction.label,
+  ];
+
+  /// 銘柄と足を集めるときに見る条件。
   ///
-  /// 両方切っていても画面には出したいので、その場合は両方向を見る。
+  /// 全部切っていても画面には出したいので、その場合は今までの手法の両方向を見る。
   List<SideConfig> get watchedSides {
-    final on = enabledSides;
+    final on = [for (final (_, side) in activeSides) side];
     return on.isEmpty ? [short, long] : on;
   }
 
@@ -542,8 +648,12 @@ class StrategyConfig {
   ///
   /// 切っている向きの下限も含める (ショート 1M・ロング 10M なら 1M 以上を
   /// 全部見る)。ここで広く集めてから、方向ごとの下限で判定時に落とす。
-  double get minAmount24Usdt =>
-      math.min(short.minAmount24Usdt, long.minAmount24Usdt);
+  /// 検証済みの手法は、使っているときだけ含める。
+  double get minAmount24Usdt => [
+    short.minAmount24Usdt,
+    long.minAmount24Usdt,
+    if (verified.enabled) verified.minAmount24Usdt,
+  ].reduce(math.min);
 
   /// 保持する足の本数。方向ごとの指定のうち多いほう。
   int get historyBars =>
@@ -567,26 +677,44 @@ class StrategyConfig {
     if (evaluationIntervalSeconds < 5) {
       errors.add('判定間隔は 5 秒以上にして下さい。');
     }
-    if (!short.enabled && !long.enabled) {
-      errors.add('ショートとロングの両方が切られています。少なくとも片方を入れて下さい。');
+    if (!short.enabled && !long.enabled && !verified.enabled) {
+      errors.add(
+        '今までの手法のショート・ロングと、検証済みの手法が全部切られています。'
+        '少なくとも 1 つ入れて下さい。',
+      );
     }
     if (maxOpenPositions < 0) {
       errors.add('同時に持つ建玉の上限は 0 以上にして下さい (0 で上限なし)。');
     }
+    if (verifiedMaxOpenPositions < 0) {
+      errors.add('検証済みの手法の同時に持つ上限は 0 以上にして下さい (0 で上限なし)。');
+    }
     errors.addAll(short.validate());
     errors.addAll(long.validate());
+    // 使っていない手法の値は、建てるときに使わないので問わない。
+    if (verified.enabled) {
+      errors.addAll(verified.validate(name: StrategyKind.verified.label));
+      if (verified.direction.isShort) {
+        errors.add('検証済みの手法はロングだけです。');
+      }
+    }
     return errors;
   }
 
   StrategyConfig copyWith({
     SideConfig? short,
     SideConfig? long,
+    SideConfig? verified,
+    int? verifiedMaxOpenPositions,
     int? evaluationIntervalSeconds,
     int? reentryCooldownMinutes,
     int? maxOpenPositions,
   }) => StrategyConfig(
     short: short ?? this.short,
     long: long ?? this.long,
+    verified: verified ?? this.verified,
+    verifiedMaxOpenPositions:
+        verifiedMaxOpenPositions ?? this.verifiedMaxOpenPositions,
     evaluationIntervalSeconds:
         evaluationIntervalSeconds ?? this.evaluationIntervalSeconds,
     reentryCooldownMinutes:
@@ -599,37 +727,32 @@ class StrategyConfig {
       ? copyWith(short: side)
       : copyWith(long: side);
 
-  /// 1 年分の検証で、前半・後半とも黒字だった設定に入れ替える
-  /// (research/strategy_search_report.md)。
+  /// 検証済みの手法の条件を、1 年分の検証で前半・後半とも黒字だった値に戻す
+  /// (research/report.md の 5.2。[SideConfig.verified] の値)。
   ///
-  /// ロングだけ。15 分足で -4σ に触れ、RSI(7) が 5 以下なら買う。
-  /// 利確は入値 +3σ、損切りは入値 -3σ、12 時間で決済されなければ成行で閉じる。
-  /// 相場全体の急落で一度に多くの銘柄を買わないよう、同時に持つのは 10 件まで。
-  /// 証拠金とレバレッジは今の値を残す。ショートは切る (12 時間以内に
-  /// 閉じる条件では、黒字になる組み合わせが無かった)。
+  /// 使うかどうか・証拠金 (固定額か割合か・その値)・レバレッジ・資金調達の
+  /// 見送りは今の値を残す。今までの手法には触らない。
   StrategyConfig withVerifiedPreset() {
-    SideConfig apply(SideConfig s) => s.copyWith(
-      minAmount24Usdt: 1000000,
-      timeframes: const [Timeframe.m15],
-      bbSigma: 4.0,
-      exitMode: ExitMode.sigma,
-      takeProfitSigma: 3.0,
-      stopLossSigma: 3.0,
-      maxHoldHours: 12,
-      bandBreakoutEntryEnabled: false,
-      addOnEnabled: false,
-    );
+    const preset = SideConfig.verified();
     return copyWith(
-      short: apply(short).copyWith(enabled: false),
-      long: apply(long).copyWith(enabled: true, rsiThreshold: 5.0),
-      reentryCooldownMinutes: 60,
-      maxOpenPositions: 10,
+      verified: preset.copyWith(
+        enabled: verified.enabled,
+        leverage: verified.leverage,
+        marginPerTradeUsdt: verified.marginPerTradeUsdt,
+        marginByPercent: verified.marginByPercent,
+        marginPercent: verified.marginPercent,
+        maxFundingBurdenPercent: verified.maxFundingBurdenPercent,
+        fundingWindowHours: verified.fundingWindowHours,
+      ),
+      verifiedMaxOpenPositions: 10,
     );
   }
 
   Map<String, dynamic> toJson() => {
     'short': short.toJson(),
     'long': long.toJson(),
+    'verified': verified.toJson(),
+    'verifiedMaxOpenPositions': verifiedMaxOpenPositions,
     'evaluationIntervalSeconds': evaluationIntervalSeconds,
     'reentryCooldownMinutes': reentryCooldownMinutes,
     'maxOpenPositions': maxOpenPositions,
@@ -658,19 +781,47 @@ class StrategyConfig {
     // 方向ごとの設定が無い保存データ (ショート専用だった頃のもの) は、
     // フラットに置かれていた値をショートとして読み、ロングはその鏡写しにする。
     final shortJson = {...shared, ...(m('short') ?? json)};
-    final shortSide =
+    var shortSide =
         SideConfig.fromJson(shortJson, direction: TradeDirection.short);
     final longJson = m('long');
-    final longSide = longJson == null
+    var longSide = longJson == null
         ? shortSide.mirrored()
         : SideConfig.fromJson(
             {...shared, ...longJson},
             direction: TradeDirection.long,
           );
 
+    final verifiedJson = m('verified');
+    var verifiedSide = verifiedJson == null
+        ? const SideConfig.verified()
+        : SideConfig.fromJson(
+            verifiedJson,
+            direction: TradeDirection.long,
+            defaults: const SideConfig.verified(),
+          );
+    if (verifiedJson == null) {
+      // 手法を分ける前の保存データ: 「検証済みの設定」を入れると、今までの
+      // 手法のロングを σ の倍数の決済にしていた。それを検証済みの手法へ移し、
+      // 今までの手法は EMA の戻りの決済に戻して切る (中身を変えずに引き継ぐ)。
+      if (longSide.exitMode == ExitMode.sigma) {
+        verifiedSide = longSide.copyWith(
+          addOnEnabled: false,
+          bandBreakoutEntryEnabled: false,
+        );
+        longSide = longSide.copyWith(exitMode: ExitMode.emaRatio, enabled: false);
+      }
+      if (shortSide.exitMode == ExitMode.sigma) {
+        shortSide =
+            shortSide.copyWith(exitMode: ExitMode.emaRatio, enabled: false);
+      }
+    }
+
     return StrategyConfig(
       short: shortSide,
       long: longSide,
+      verified: verifiedSide,
+      verifiedMaxOpenPositions:
+          i('verifiedMaxOpenPositions', fallback.verifiedMaxOpenPositions),
       evaluationIntervalSeconds:
           i('evaluationIntervalSeconds', fallback.evaluationIntervalSeconds),
       reentryCooldownMinutes:

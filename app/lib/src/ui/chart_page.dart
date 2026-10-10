@@ -858,7 +858,8 @@ class _ExitLineEditor extends StatelessWidget {
             Row(
               children: [
                 Text(
-                  '${position.direction.label} ${position.vol} 枚',
+                  '${position.direction.label} ${position.vol} 枚'
+                  '${position.strategy == StrategyKind.verified ? ' (検証済み)' : ''}',
                   style: theme.textTheme.titleSmall?.copyWith(
                     fontWeight: FontWeight.bold,
                     color: isShort ? Colors.redAccent : Colors.green,

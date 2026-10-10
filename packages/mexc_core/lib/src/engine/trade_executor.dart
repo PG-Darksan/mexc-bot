@@ -3,8 +3,60 @@ import 'dart:math' as math;
 import '../api/mexc_exception.dart';
 import '../api/mexc_rest_client.dart';
 import '../models/contract_info.dart';
+import '../models/manual_order.dart';
 import '../models/signal.dart';
 import '../models/strategy_config.dart';
+
+/// 1 回の新規建てに充てる証拠金をどう決めたか (通信を伴わない計算)。
+class EntryMargin {
+  const EntryMargin({required this.usdt, required this.basis});
+
+  /// 使える残高で削る前の証拠金 (USDT)。
+  final double usdt;
+
+  /// どう決めたかの説明 (ログに出す)。固定額のときは null。
+  final String? basis;
+
+  /// [side] の決め方で証拠金を出す。資産の割合で決めるのに資産が分からな
+  /// ければ null。
+  ///
+  /// 割合のときは、取引画面の「何 %」と同じく、その銘柄で持てる建玉の上限
+  /// (証拠金に直した額) が資産より小さければ上限を基準にし、持てる上限と
+  /// 1 回の注文の上限を超えない。使える残高で削るのは呼ぶ側 (発注の直前)。
+  static EntryMargin? compute({
+    required SideConfig side,
+    required ContractInfo contract,
+    required double price,
+    double? equityUsdt,
+    double? availableUsdt,
+  }) {
+    if (!side.marginByPercent) {
+      return EntryMargin(usdt: side.marginPerTradeUsdt, basis: null);
+    }
+    // 資産 (建玉の証拠金や含み損益も含む合計) を基準にする。取れていなければ
+    // 使える残高で代える。
+    final asset = (equityUsdt != null && equityUsdt > 0)
+        ? equityUsdt
+        : availableUsdt;
+    final sizing = OrderSizeBasis.of(
+      available: asset,
+      contract: contract,
+      price: price,
+      leverage: side.leverage,
+    );
+    final margin = sizing.marginFor(side.marginPercent);
+    final base = sizing.base;
+    if (margin == null || base == null) return null;
+    final percent = side.marginPercent.toStringAsFixed(
+      side.marginPercent == side.marginPercent.roundToDouble() ? 0 : 1,
+    );
+    final what = sizing.basedOnSymbolLimit ? 'この銘柄で持てる上限' : '資産';
+    return EntryMargin(
+      usdt: margin,
+      basis: '$what ${base.toStringAsFixed(2)} USDT の $percent%',
+    );
+  }
+}
 
 /// 買い足し / 売り足しの指値をどこに何枚置くかの計算結果。
 ///
@@ -75,23 +127,44 @@ class TradeExecutor {
   ///
   /// 利確は発注と同時に takeProfitPrice を付けるのが基本。
   /// そうすればボットが落ちていても取引所側で決済される。
+  /// 条件 (証拠金・レバレッジ・最長保有) は、シグナルを出した手法のものを使う。
   Future<ManagedPosition> open({
     required SignalEvaluation evaluation,
     required ContractInfo contract,
     required StrategyConfig config,
     double? availableUsdt,
+    double? equityUsdt,
   }) async {
     final direction = evaluation.direction;
-    final side = config.sideOf(direction);
+    final side = config.sideFor(evaluation.strategy, direction);
     final isShort = direction.isShort;
     final markPrice = evaluation.price;
 
     // 成行で出す。約定しやすい側へ刻みを丸める。
     final entryPrice = contract.roundPrice(markPrice, roundUp: !isShort);
 
-    // 設定の証拠金が残高を超えていれば、残高で建てられる分にする
+    // 証拠金は固定額か、資産の割合。
+    final planned = EntryMargin.compute(
+      side: side,
+      contract: contract,
+      price: entryPrice,
+      equityUsdt: equityUsdt,
+      availableUsdt: availableUsdt,
+    );
+    if (planned == null) {
+      throw StateError(
+        '${contract.symbol}: 資産が分からないので、証拠金を割合で決められません。',
+      );
+    }
+    var margin = planned.usdt;
+    if (planned.basis != null) {
+      onLog?.call(
+        '${contract.symbol}: 証拠金 ${margin.toStringAsFixed(2)} USDT '
+        '(${planned.basis})',
+      );
+    }
+    // 証拠金が残高を超えていれば、残高で建てられる分にする
     // (手数料の分だけ余らせる)。
-    var margin = side.marginPerTradeUsdt;
     if (availableUsdt != null && availableUsdt > 0) {
       final usable = availableUsdt * 0.99;
       if (usable < margin) {
@@ -150,6 +223,7 @@ class TradeExecutor {
       stopLossPrice: stopLoss,
       status: ManagedPositionStatus.open,
       maxHoldMinutes: side.maxHoldHours > 0 ? side.maxHoldHours * 60 : null,
+      strategy: evaluation.strategy,
     );
 
     // 建玉が無い状態では positionId ではなく
@@ -182,6 +256,7 @@ class TradeExecutor {
     );
 
     onLog?.call(
+      '${evaluation.strategy == StrategyKind.verified ? "[検証済み] " : ""}'
       '${contract.symbol} ${evaluation.timeframe.label} '
       '${direction.label}発注 '
       '${vol.toStringAsFixed(contract.volScale)} 枚 @ $entryPrice '
@@ -205,7 +280,7 @@ class TradeExecutor {
     required StrategyConfig config,
     required double availableUsdt,
   }) async {
-    final side = config.sideOf(position.direction);
+    final side = config.sideFor(position.strategy, position.direction);
     final plan = AddOnPlan.compute(
       side: side,
       contract: contract,

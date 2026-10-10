@@ -49,6 +49,7 @@ class SignalEvaluation {
     required this.fundingIntervalHours,
     required this.barOpenTime,
     this.rejectReason,
+    this.strategy = StrategyKind.classic,
   });
 
   final String symbol;
@@ -56,6 +57,9 @@ class SignalEvaluation {
 
   /// この評価がどちら向きの建玉を狙ったものか。
   final TradeDirection direction;
+
+  /// どの手法の条件で判定したか。
+  final StrategyKind strategy;
 
   /// 判定時点の価格 (進行中の足の終値)。
   final double price;
@@ -122,12 +126,14 @@ class SignalEvaluation {
     fundingIntervalHours: fundingIntervalHours,
     barOpenTime: barOpenTime,
     rejectReason: reason,
+    strategy: strategy,
   );
 
   Map<String, dynamic> toJson() => {
     'symbol': symbol,
     'timeframe': timeframe.name,
     'direction': direction.name,
+    'strategy': strategy.name,
     'price': price,
     'amount24': amount24,
     'rsi': rsi,
@@ -174,6 +180,7 @@ class SignalEvaluation {
         rejectReason: RejectReason.values
             .where((e) => e.name == json['rejectReason'])
             .firstOrNull,
+        strategy: StrategyKind.fromName(json['strategy'] as String?),
       );
 }
 
@@ -209,10 +216,14 @@ class ManagedPosition {
     this.addOnVol,
     this.addOnFilled = false,
     this.maxHoldMinutes,
+    this.strategy = StrategyKind.classic,
   });
 
   /// externalOid と同じ値。取引所側と突き合わせるのに使う。
   final String id;
+
+  /// どの手法で建てたか。手法を分ける前の記録は今までの手法として読む。
+  final StrategyKind strategy;
 
   final String symbol;
   final Timeframe timeframe;
@@ -326,6 +337,7 @@ class ManagedPosition {
     addOnVol: clearAddOn ? null : (addOnVol ?? this.addOnVol),
     addOnFilled: clearAddOn ? false : (addOnFilled ?? this.addOnFilled),
     maxHoldMinutes: maxHoldMinutes,
+    strategy: strategy,
   );
 
   Map<String, dynamic> toJson() => {
@@ -333,6 +345,7 @@ class ManagedPosition {
     'symbol': symbol,
     'timeframe': timeframe.name,
     'direction': direction.name,
+    'strategy': strategy.name,
     'openedAt': openedAt.toIso8601String(),
     'entryPrice': entryPrice,
     'vol': vol,
@@ -391,6 +404,7 @@ class ManagedPosition {
         addOnVol: (json['addOnVol'] as num?)?.toDouble(),
         addOnFilled: json['addOnFilled'] as bool? ?? false,
         maxHoldMinutes: (json['maxHoldMinutes'] as num?)?.toInt(),
+        strategy: StrategyKind.fromName(json['strategy'] as String?),
       );
 }
 

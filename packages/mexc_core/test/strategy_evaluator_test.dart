@@ -985,29 +985,28 @@ void main() {
       );
     });
 
-    test('検証済みの設定はロングだけ・15 分足・-4σ・RSI 5 以下・同時 10 件まで', () {
+    test('検証した値に戻しても、使うか・証拠金・レバレッジと今までの手法は変えない', () {
       final before = const StrategyConfig().copyWith(
-        long: const SideConfig.long().copyWith(
-          marginPerTradeUsdt: 25,
+        verified: const SideConfig.verified().copyWith(
+          enabled: true,
+          rsiThreshold: 20,
+          maxHoldHours: 3,
           leverage: 2,
+          marginPercent: 7,
         ),
+        verifiedMaxOpenPositions: 3,
       );
       final preset = before.withVerifiedPreset();
       expect(preset.validate(), isEmpty);
-      expect(preset.short.enabled, isFalse);
-      expect(preset.long.enabled, isTrue);
-      expect(preset.long.timeframes, [Timeframe.m15]);
-      expect(preset.maxOpenPositions, 10);
-      expect(preset.long.bbSigma, 4);
-      expect(preset.long.rsiThreshold, 5);
-      expect(preset.long.exitMode, ExitMode.sigma);
-      expect(preset.long.takeProfitSigma, 3);
-      expect(preset.long.stopLossSigma, 3);
-      expect(preset.long.maxHoldHours, 12);
-      expect(preset.long.bandBreakoutEntryEnabled, isFalse);
-      // 証拠金とレバレッジは残す。
-      expect(preset.long.marginPerTradeUsdt, 25);
-      expect(preset.long.leverage, 2);
+      expect(preset.verified.enabled, isTrue);
+      expect(preset.verified.timeframes, [Timeframe.m15]);
+      expect(preset.verified.rsiThreshold, 5);
+      expect(preset.verified.maxHoldHours, 12);
+      expect(preset.verifiedMaxOpenPositions, 10);
+      expect(preset.verified.leverage, 2);
+      expect(preset.verified.marginPercent, 7);
+      expect(preset.short, same(before.short));
+      expect(preset.long, same(before.long));
     });
 
     test('建玉の記録は最長保有時間を持って往復でき、期限が出せる', () {
@@ -1041,6 +1040,281 @@ void main() {
         ).closeDeadline,
         isNull,
       );
+    });
+  });
+
+  group('検証済みの手法 (今までの手法と同時に動かす)', () {
+    test('既定では切ってあり、入れると今までの手法と一緒に動く', () {
+      const base = StrategyConfig();
+      expect(base.verified.enabled, isFalse);
+      expect(base.activeLabels, ['ショート', 'ロング']);
+      final both = base.copyWith(
+        verified: base.verified.copyWith(enabled: true),
+      );
+      expect(both.validate(), isEmpty);
+      expect(both.activeLabels, ['ショート', 'ロング', '検証済みの手法']);
+      expect(
+        both.sideFor(StrategyKind.verified, TradeDirection.long),
+        same(both.verified),
+      );
+      expect(
+        both.sideFor(StrategyKind.classic, TradeDirection.long),
+        same(both.long),
+      );
+      // 監視する銘柄は、検証済みの手法の出来高の下限 (1M) まで広げる。
+      expect(base.minAmount24Usdt, 5000000);
+      expect(both.minAmount24Usdt, 1000000);
+      expect(both.timeframes, contains(Timeframe.m15));
+    });
+
+    test('今までの手法を全部切っても、検証済みの手法だけで動かせる', () {
+      final only = const StrategyConfig().copyWith(
+        short: const SideConfig.short().copyWith(enabled: false),
+        long: const SideConfig.long().copyWith(enabled: false),
+        verified: const SideConfig.verified().copyWith(enabled: true),
+      );
+      expect(only.validate(), isEmpty);
+      expect(only.activeLabels, ['検証済みの手法']);
+      expect(only.watchedSides, [same(only.verified)]);
+      final none = only.copyWith(
+        verified: only.verified.copyWith(enabled: false),
+      );
+      expect(none.validate(), contains(contains('全部切られています')));
+    });
+
+    test('値は 15 分足・-4σ・RSI 5 以下・σ 3 で利確と損切り・12 時間・同時 10 件', () {
+      const v = SideConfig.verified();
+      expect(v.direction, TradeDirection.long);
+      expect(v.timeframes, [Timeframe.m15]);
+      expect(v.bbSigma, 4);
+      expect(v.rsiThreshold, 5);
+      expect(v.exitMode, ExitMode.sigma);
+      expect(v.takeProfitSigma, 3);
+      expect(v.stopLossSigma, 3);
+      expect(v.maxHoldHours, 12);
+      expect(v.addOnEnabled, isFalse);
+      expect(v.bandBreakoutEntryEnabled, isFalse);
+      expect(v.minAmount24Usdt, 1000000);
+      expect(v.marginByPercent, isTrue);
+      expect(const StrategyConfig().verifiedMaxOpenPositions, 10);
+    });
+
+    test('判定はその条件で σ の利確・損切りを付け、どの手法かの印を付ける', () {
+      final config = const StrategyConfig().copyWith(
+        verified: const SideConfig.verified().copyWith(enabled: true),
+      );
+      final closes = spikeSeries(spike: 0.5);
+      SignalEvaluation evaluate({SideConfig? side, StrategyKind? kind}) =>
+          StrategyEvaluator(config).evaluate(
+            symbol: symbol,
+            timeframe: Timeframe.m15,
+            direction: TradeDirection.long,
+            series: seriesFrom(closes),
+            contract: contract(),
+            ticker: ticker(10000000),
+            funding: funding(rate: -0.0001, cycle: 8),
+            sideConfig: side,
+            strategy: kind ?? StrategyKind.classic,
+          );
+      final verified = evaluate(
+        side: config.verified,
+        kind: StrategyKind.verified,
+      );
+      expect(verified.rejectReason, isNull, reason: '却下: ${verified.rejectReason}');
+      expect(verified.strategy, StrategyKind.verified);
+      final sd = Indicators.bollinger(closes, 20, 4)!.deviation;
+      expect(verified.takeProfitPrice, closeTo(verified.price + 3 * sd, 1e-9));
+      expect(verified.stopLossPrice, closeTo(verified.price - 3 * sd, 1e-9));
+      expect(
+        SignalEvaluation.fromJson(verified.toJson()).strategy,
+        StrategyKind.verified,
+      );
+      // 同じ足でも、今までの手法のロングは EMA の戻りで利確し、損切りは付かない。
+      final classic = evaluate();
+      expect(classic.isTriggered, isTrue);
+      expect(classic.strategy, StrategyKind.classic);
+      expect(classic.stopLossPrice, isNull);
+    });
+
+    test('設定は JSON と往復でき、手法を分ける前の σ のロングは検証済みの手法へ移す', () {
+      final config = const StrategyConfig().copyWith(
+        verified: const SideConfig.verified().copyWith(
+          enabled: true,
+          marginPercent: 8,
+        ),
+        verifiedMaxOpenPositions: 4,
+        long: const SideConfig.long().copyWith(
+          marginByPercent: true,
+          marginPercent: 25,
+        ),
+      );
+      final restored = StrategyConfig.fromJson(config.toJson());
+      expect(restored.verified.enabled, isTrue);
+      expect(restored.verified.marginPercent, 8);
+      expect(restored.verified.exitMode, ExitMode.sigma);
+      expect(restored.verifiedMaxOpenPositions, 4);
+      expect(restored.long.marginByPercent, isTrue);
+      expect(restored.long.marginPercent, 25);
+
+      // 「検証済みの設定」を入れていた頃の保存データ (検証済みの手法の欄が
+      // 無く、今までの手法のロングを σ の決済にしていた)。
+      final old = const StrategyConfig()
+          .copyWith(
+            short: const SideConfig.short().copyWith(enabled: false),
+            long: const SideConfig.long().copyWith(
+              exitMode: ExitMode.sigma,
+              timeframes: [Timeframe.m15],
+              rsiThreshold: 5,
+              maxHoldHours: 12,
+              marginPerTradeUsdt: 30,
+            ),
+          )
+          .toJson()
+        ..remove('verified')
+        ..remove('verifiedMaxOpenPositions');
+      final migrated = StrategyConfig.fromJson(old);
+      expect(migrated.verified.enabled, isTrue);
+      expect(migrated.verified.exitMode, ExitMode.sigma);
+      expect(migrated.verified.rsiThreshold, 5);
+      expect(migrated.verified.maxHoldHours, 12);
+      expect(migrated.verified.marginByPercent, isFalse);
+      expect(migrated.verified.marginPerTradeUsdt, 30);
+      expect(migrated.long.enabled, isFalse);
+      expect(migrated.long.exitMode, ExitMode.emaRatio);
+      expect(migrated.validate(), isEmpty);
+
+      // 割合の項目が無い保存データは固定額で、検証済みの手法の欄が無ければ
+      // 切ったまま既定値で読む。
+      final legacy = const StrategyConfig().toJson();
+      (legacy['long'] as Map).remove('marginByPercent');
+      legacy.remove('verified');
+      final read = StrategyConfig.fromJson(legacy);
+      expect(read.long.marginByPercent, isFalse);
+      expect(read.verified.enabled, isFalse);
+      expect(read.verified.rsiThreshold, 5);
+    });
+
+    test('建玉の記録は手法を持って往復し、古い記録は今までの手法として読む', () {
+      final p = ManagedPosition(
+        id: 'v',
+        symbol: symbol,
+        timeframe: Timeframe.m15,
+        direction: TradeDirection.long,
+        openedAt: DateTime(2026, 1, 1),
+        entryPrice: 100,
+        vol: 1,
+        contractSize: 1,
+        leverage: 1,
+        emaAtSignal: 0,
+        deviationAtSignal: 0,
+        takeProfitPrice: 106,
+        stopLossPrice: 94,
+        status: ManagedPositionStatus.open,
+        strategy: StrategyKind.verified,
+      );
+      expect(ManagedPosition.fromJson(p.toJson()).strategy, StrategyKind.verified);
+      expect(p.copyWith(takeProfitPrice: 110).strategy, StrategyKind.verified);
+      expect(
+        ManagedPosition.fromJson(p.toJson()..remove('strategy')).strategy,
+        StrategyKind.classic,
+      );
+    });
+  });
+
+  group('1 回の証拠金 (固定額か資産の割合か)', () {
+    // 1 枚 = 0.2 USDT × 10 = 2 USDT (1 倍)。持てる上限は 400 枚 = 800 USDT。
+    ContractInfo limited() => ContractInfo(
+      symbol: 'TAKE_USDT',
+      baseCoin: 'TAKE',
+      quoteCoin: 'USDT',
+      settleCoin: 'USDT',
+      contractSize: 10,
+      minVol: 1,
+      maxVol: 1000,
+      volUnit: 1,
+      volScale: 0,
+      priceUnit: 0.00001,
+      priceScale: 5,
+      minLeverage: 1,
+      maxLeverage: 50,
+      positionOpenType: 3,
+      apiAllowed: true,
+      state: 0,
+      takerFeeRate: 0.0002,
+      makerFeeRate: 0,
+      futureType: 1,
+      riskBaseVol: 300,
+      riskIncrVol: 50,
+      riskLevelLimit: 3,
+    );
+    final byPercent = const SideConfig.long().copyWith(
+      marginByPercent: true,
+      marginPercent: 10,
+    );
+
+    test('固定額ならその額', () {
+      final m = EntryMargin.compute(
+        side: const SideConfig.long().copyWith(marginPerTradeUsdt: 50),
+        contract: limited(),
+        price: 0.2,
+        equityUsdt: 1000,
+        availableUsdt: 1000,
+      )!;
+      expect(m.usdt, 50);
+      expect(m.basis, isNull);
+    });
+
+    test('割合なら資産 (建玉の分も含む合計) に対する割合', () {
+      final m = EntryMargin.compute(
+        side: byPercent,
+        contract: limited(),
+        price: 0.2,
+        equityUsdt: 600,
+        availableUsdt: 400,
+      )!;
+      expect(m.usdt, closeTo(60, 1e-9));
+      expect(m.basis, contains('資産 600.00 USDT の 10%'));
+    });
+
+    test('銘柄で持てる上限が資産より小さければ、上限に対する割合にする', () {
+      final m = EntryMargin.compute(
+        side: byPercent.copyWith(marginPercent: 25),
+        contract: limited(),
+        price: 0.2,
+        equityUsdt: 3200,
+        availableUsdt: 3200,
+      )!;
+      // 上限 800 USDT の 25% = 200 USDT (資産 3200 USDT の 25% の 800 ではない)。
+      expect(m.usdt, closeTo(200, 1e-9));
+      expect(m.basis, contains('上限'));
+    });
+
+    test('資産が分からなければ使える残高で代え、どちらも無ければ決められない', () {
+      expect(
+        EntryMargin.compute(
+          side: byPercent,
+          contract: limited(),
+          price: 0.2,
+          availableUsdt: 500,
+        )!.usdt,
+        closeTo(50, 1e-9),
+      );
+      expect(
+        EntryMargin.compute(side: byPercent, contract: limited(), price: 0.2),
+        isNull,
+      );
+    });
+
+    test('割合のおかしな値は弾き、割合のときは固定額を問わない', () {
+      expect(
+        byPercent.copyWith(marginPercent: 0).validate(),
+        contains(contains('割合')),
+      );
+      expect(
+        byPercent.copyWith(marginPercent: 150).validate(),
+        contains(contains('割合')),
+      );
+      expect(byPercent.copyWith(marginPerTradeUsdt: 0).validate(), isEmpty);
     });
   });
 }

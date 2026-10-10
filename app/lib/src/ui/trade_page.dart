@@ -1314,7 +1314,8 @@ class _TradePageState extends State<TradePage> {
           Text('持っていません。', style: theme.textTheme.bodySmall),
         for (final p in managed)
           _PositionTile(
-            title: '${p.direction.label} ${p.vol} 枚 (ボット)',
+            title: '${p.direction.label} ${p.vol} 枚 '
+                '(ボット${p.strategy == StrategyKind.verified ? '・検証済み' : ''})',
             color: p.direction.isShort ? Colors.redAccent : Colors.green,
             lines: [
               '建値 ${formatPrice(p.entryPrice)} / 利確 ${formatPrice(p.takeProfitPrice)}'

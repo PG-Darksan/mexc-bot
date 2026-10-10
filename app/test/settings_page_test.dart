@@ -23,6 +23,13 @@ Future<AppState> _pumpSettings(WidgetTester tester) async {
   return state;
 }
 
+/// 設定の画面は長いので、下の方の欄も押せるよう縦に長い画面にする。
+void _tallScreen(WidgetTester tester) {
+  tester.view.physicalSize = const Size(800, 6000);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+}
+
 /// 「保存して反映」を押して、「保存しました」の知らせが消えるまで待つ。
 Future<void> _save(WidgetTester tester) async {
   await tester.tap(find.text('保存して反映'));
@@ -99,31 +106,61 @@ void main() {
     expect(c.long.minAmount24Usdt, 10000000);
   });
 
-  testWidgets('検証済みの設定を入れて保存すると、σ の決済でロングだけになる', (tester) async {
+  testWidgets('検証済みの手法を入れて保存すると、今までの手法と一緒に動く', (tester) async {
+    _tallScreen(tester);
     final state = await _pumpSettings(tester);
-    // 入れる前は今までの決め方なので、σ の欄は出ていない。
+    // 使う前は、検証済みの手法の細かい欄は出ていない。
     expect(find.text('利確 (入値から)'), findsNothing);
 
-    await tester.tap(find.text('この設定を入れる'));
+    final use = find.text('この手法を使う');
+    await tester.ensureVisible(use);
+    await tester.tap(use);
     await tester.pumpAndSettle();
     expect(find.text('利確 (入値から)'), findsOneWidget);
     // 保存するまではボットの設定は変わらない。
-    expect(state.config.long.exitMode, ExitMode.emaRatio);
+    expect(state.config.verified.enabled, isFalse);
 
-    await tester.pump(const Duration(seconds: 5));
-    await tester.pumpAndSettle();
     await _save(tester);
 
     final c = state.config;
-    expect(c.short.enabled, isFalse);
+    expect(c.verified.enabled, isTrue);
+    expect(c.verified.timeframes, [Timeframe.m15]);
+    expect(c.verified.bbSigma, 4);
+    expect(c.verified.rsiThreshold, 5);
+    expect(c.verified.exitMode, ExitMode.sigma);
+    expect(c.verified.takeProfitSigma, 3);
+    expect(c.verified.stopLossSigma, 3);
+    expect(c.verified.maxHoldHours, 12);
+    expect(c.verifiedMaxOpenPositions, 10);
+    // 今までの手法はそのまま (EMA の戻りで利確)。
+    expect(c.short.enabled, isTrue);
     expect(c.long.enabled, isTrue);
-    expect(c.long.timeframes, [Timeframe.m15]);
-    expect(c.maxOpenPositions, 10);
-    expect(c.long.bbSigma, 4);
-    expect(c.long.rsiThreshold, 5);
-    expect(c.long.exitMode, ExitMode.sigma);
-    expect(c.long.takeProfitSigma, 3);
-    expect(c.long.stopLossSigma, 3);
-    expect(c.long.maxHoldHours, 12);
+    expect(c.long.exitMode, ExitMode.emaRatio);
+    expect(c.activeLabels, ['ショート', 'ロング', '検証済みの手法']);
+  });
+
+  testWidgets('証拠金を資産の割合にすると、スライダーの値が両方の向きに入る', (tester) async {
+    _tallScreen(tester);
+    final state = await _pumpSettings(tester);
+
+    final byPercent = find.text('1 回の証拠金を資産の割合で決める').first;
+    await tester.ensureVisible(byPercent);
+    await tester.tap(byPercent);
+    await tester.pumpAndSettle();
+    final slider = find.byType(Slider).first;
+    expect(slider, findsOneWidget);
+    tester.widget<Slider>(slider).onChanged!(25);
+    await tester.pumpAndSettle();
+    expect(find.text('1 回の証拠金: 資産の 25%'), findsOneWidget);
+
+    await _save(tester);
+
+    final c = state.config;
+    expect(c.short.marginByPercent, isTrue);
+    expect(c.long.marginByPercent, isTrue);
+    expect(c.short.marginPercent, 25);
+    expect(c.long.marginPercent, 25);
+    // 検証済みの手法の証拠金は別 (既定は資産の 5%)。
+    expect(c.verified.marginPercent, 5);
   });
 }
