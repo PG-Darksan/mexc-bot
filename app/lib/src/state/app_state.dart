@@ -127,6 +127,11 @@ class AppState extends ChangeNotifier {
       if (e.symbol == symbol) e,
   ];
 
+  /// 取引所の建玉に付いている利確 / 損切り。ボットが管理していない建玉の
+  /// 線を引くのに使う。サーバーが返していなければ (古いサーバー) 両方 null。
+  ({double? takeProfit, double? stopLoss}) exitOf(PositionInfo position) =>
+      exitOfPosition(position, _snapshot.stopOrders ?? const []);
+
   /// [symbol] の取引所の建玉 (ボットのものも手で建てたものも)。
   List<PositionInfo> exchangePositionsOf(String symbol) => [
     for (final p in _snapshot.exchangePositions ?? const <PositionInfo>[])

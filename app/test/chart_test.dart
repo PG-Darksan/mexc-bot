@@ -115,6 +115,66 @@ void main() {
     expect(find.text('3σ'), findsOneWidget);
   });
 
+  group('利確 / 損切りの線をつかんで動かす', () {
+    Future<List<(Object, double)>> pumpChart(WidgetTester tester) async {
+      final moves = <(Object, double)>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ListView(
+              children: [
+                PriceChart(
+                  candles: _candles(300),
+                  bbPeriod: 20,
+                  bbSigma: 4,
+                  emaPeriod: 5,
+                  // バンドを描かないので、値幅はローソクと線で決まる。
+                  sigmas: const [],
+                  lines: const [
+                    PriceLine(
+                      price: 200,
+                      label: '利確',
+                      color: Colors.green,
+                      dragKey: 'tp',
+                    ),
+                  ],
+                  onLineDragged: (key, price) => moves.add((key, price)),
+                ),
+                const SizedBox(height: 2000),
+              ],
+            ),
+          ),
+        ),
+      );
+      return moves;
+    }
+
+    testWidgets('線の近くからなぞると、その線が指に付いて動く', (tester) async {
+      final moves = await pumpChart(tester);
+      final origin = tester.getTopLeft(find.byType(PriceChart));
+      // 値幅は 88〜200 に 6% ずつ足したもの。200 の線は上から約 20px。
+      await tester.dragFrom(origin + const Offset(60, 20), const Offset(0, 50));
+      await tester.pump();
+      expect(moves, isNotEmpty);
+      expect(moves.last.$1, 'tp');
+      // 50px 下げると、約 24 下がる (1px あたり約 0.49)。
+      expect(moves.last.$2, inInclusiveRange(170, 182));
+    });
+
+    testWidgets('線から離れた所のなぞりは、画面のスクロールに回す', (tester) async {
+      final moves = await pumpChart(tester);
+      final origin = tester.getTopLeft(find.byType(PriceChart));
+      await tester.dragFrom(
+        origin + const Offset(60, 200),
+        const Offset(0, -120),
+      );
+      await tester.pump();
+      expect(moves, isEmpty);
+      final scroll = tester.state<ScrollableState>(find.byType(Scrollable));
+      expect(scroll.position.pixels, greaterThan(0));
+    });
+  });
+
   test('以前の版の線の選択は、判定の 4σ を足して引き継ぐ', () {
     final restored = AppSettings.fromJson({
       'chartSigmas': [2, 3],

@@ -10,6 +10,7 @@ import '../models/position.dart';
 import '../models/signal.dart';
 import '../models/strategy_config.dart';
 import 'market_data_feed.dart';
+import 'signal_latch.dart';
 import 'strategy_evaluator.dart';
 import 'trade_executor.dart';
 
@@ -68,6 +69,8 @@ class BotEngine {
   final List<ManagedPosition> _closedPositions = [];
   final Map<String, DateTime> _cooldownUntil = {};
 
+  /// 検知した足。同じ足では、注文を出せなかったときも二度は検知しない。
+  final SignalLatch _latch = SignalLatch();
 
   /// 取引所側に建玉がある銘柄。ボットが建てたものも、手で建てたものも入る。
   ///
@@ -95,6 +98,11 @@ class BotEngine {
   /// いなければ null。
   List<ExchangeOrder>? _openOrders;
   bool _warnedOrderFetch = false;
+
+  /// 建玉に付けた利確 / 損切り (手で建てた建玉の線に使う)。まだ取って
+  /// いなければ null。
+  List<PositionStopOrder>? _stopOrders;
+  bool _warnedStopOrderFetch = false;
 
   /// 条件付き注文に付けた利確 / 損切りの予約。発動して建玉ができたら置く。
   final List<PendingExit> _pendingExits = [];
@@ -185,6 +193,7 @@ class BotEngine {
     },
     openOrders: _openOrders,
     pendingExits: List.unmodifiable(_pendingExits),
+    stopOrders: _stopOrders,
   );
 
   // ── 起動 / 停止 ─────────────────────────────────────────────
@@ -319,7 +328,23 @@ class BotEngine {
       // 最長保有時間を過ぎた建玉を成行で閉じる。
       await _closeExpiredPositions();
 
-      final evaluations = _evaluateAll();
+      // 条件を満たしたら、注文を出せるかどうかに関わらず検知として残す。
+      // 同じ足ではもう検知しない (足が確定するまで)。
+      _latch.prune(now.millisecondsSinceEpoch ~/ 1000);
+      final evaluations = <SignalEvaluation>[];
+      for (final evaluation in _evaluateAll()) {
+        if (!evaluation.isTriggered) {
+          evaluations.add(evaluation);
+        } else if (_latch.isLatched(evaluation)) {
+          // 見送っている理由があれば、そちらを見せる。
+          evaluations.add(evaluation.rejected(
+            _blockReason(evaluation) ?? RejectReason.alreadyDetected,
+          ));
+        } else {
+          _latch.latch(evaluation);
+          evaluations.add(await _handleSignal(evaluation));
+        }
+      }
       _lastEvaluations = evaluations
           .where((e) => e.rejectReason != RejectReason.insufficientData)
           .toList()
@@ -327,10 +352,6 @@ class BotEngine {
       if (_lastEvaluations.length > maxEvaluationsInSnapshot) {
         _lastEvaluations =
             _lastEvaluations.sublist(0, maxEvaluationsInSnapshot);
-      }
-
-      for (final evaluation in evaluations.where((e) => e.isTriggered)) {
-        await _handleSignal(evaluation);
       }
 
       _lastError = null;
@@ -383,36 +404,34 @@ class BotEngine {
             sideConfig: side,
             strategy: kind,
           );
-          out.add(_applyPortfolioFilters(evaluation));
+          out.add(evaluation);
         }
       }
     }
     return out;
   }
 
-  /// 指標以外 (保有状況・再エントリー待ち) の条件を重ねる。
-  ///
-  /// 建玉のある銘柄は、持っている間は 1 回しか発火しない (重ねて建てない)。
-  SignalEvaluation _applyPortfolioFilters(SignalEvaluation evaluation) {
-    if (!evaluation.isTriggered) return evaluation;
-
-    RejectReason? reason;
+  /// 指標以外 (保有状況・上限・再エントリー待ち・残高) で発注しない理由。
+  /// 出せるなら null。
+  RejectReason? _blockReason(SignalEvaluation evaluation) {
     if (isHolding(evaluation.symbol)) {
       // すでに建玉がある銘柄には、向きが同じでも違っても新規は出さない。
       // 出すのは利確 (決済) だけ。
-      reason = RejectReason.alreadyHolding;
-    } else if (atPositionLimit ||
-        (evaluation.strategy == StrategyKind.verified && verifiedAtLimit)) {
-      reason = RejectReason.maxPositions;
-    } else {
-      final until = _cooldownUntil[evaluation.symbol];
-      if (until != null && DateTime.now().isBefore(until)) {
-        reason = RejectReason.cooldown;
-      }
+      return RejectReason.alreadyHolding;
     }
-
-    if (reason == null) return evaluation;
-    return evaluation.rejected(reason);
+    if (atPositionLimit ||
+        (evaluation.strategy == StrategyKind.verified && verifiedAtLimit)) {
+      return RejectReason.maxPositions;
+    }
+    final until = _cooldownUntil[evaluation.symbol];
+    if (until != null && DateTime.now().isBefore(until)) {
+      return RejectReason.cooldown;
+    }
+    final available = _asset?.availableBalance;
+    if (_rest.hasCredentials && available != null && available <= 0) {
+      return RejectReason.insufficientBalance;
+    }
+    return null;
   }
 
 
@@ -446,17 +465,16 @@ class BotEngine {
     return count >= limit;
   }
 
-  Future<void> _handleSignal(SignalEvaluation evaluation) async {
+  /// 検知を記録し、出せるなら発注する。画面に出す評価 (見送ったなら
+  /// その理由を付けたもの) を返す。
+  Future<SignalEvaluation> _handleSignal(SignalEvaluation evaluation) async {
     final contract = _feed.contractOf(evaluation.symbol);
-    if (contract == null) return;
+    if (contract == null) return evaluation;
 
     // 同じサイクルで別の時間軸や反対方向・別の手法が先に建てている場合が
-    // あるので、発注の直前にもう一度見る。上限も同じサイクルの発注で埋まる
-    // ことがある。
-    if (isHolding(evaluation.symbol)) return;
-    if (atPositionLimit) return;
+    // あるので、発注の直前に見る。上限も同じサイクルの発注で埋まることがある。
+    final blocked = _blockReason(evaluation);
     final byVerified = evaluation.strategy == StrategyKind.verified;
-    if (byVerified && verifiedAtLimit) return;
 
     final side = _config.sideFor(evaluation.strategy, evaluation.direction);
     final isShort = evaluation.direction.isShort;
@@ -477,15 +495,17 @@ class BotEngine {
         '価格 ${evaluation.price} / $detail / '
         '利確 '
         '${evaluation.takeProfitPrice?.toStringAsFixed(contract.priceScale) ?? "-"}'
-        '${evaluation.stopLossPrice == null ? "" : " / 損切り ${evaluation.stopLossPrice!.toStringAsFixed(contract.priceScale)}"}',
+        '${evaluation.stopLossPrice == null ? "" : " / 損切り ${evaluation.stopLossPrice!.toStringAsFixed(contract.priceScale)}"}'
+        '${blocked == null ? "" : " → 発注しません (${blocked.label})"}',
         symbol: evaluation.symbol,
         data: evaluation.toJson(),
       ),
     );
+    if (blocked != null) return evaluation.rejected(blocked);
 
     if (!_rest.hasCredentials) {
       _log(BotEvent.warning('APIキーが未設定のため発注出来ません。'));
-      return;
+      return evaluation;
     }
 
     try {
@@ -526,6 +546,7 @@ class BotEngine {
         symbol: evaluation.symbol,
       ));
     }
+    return evaluation;
   }
 
   /// 成行の約定で減ったあとの残高を見てから、買い足しの指値を置く。
@@ -686,6 +707,13 @@ class BotEngine {
       // 入らない (約定すると手の注文とボットの建玉が 1 つにまとまるため)。
       final orders = await _fetchOpenOrders();
       if (orders != null) _openOrders = orders;
+      // 建玉に付けた利確 / 損切り。建玉が無ければ聞かない。
+      if (open.isEmpty) {
+        _stopOrders = const [];
+      } else {
+        final stops = await _fetchStopOrders();
+        if (stops != null) _stopOrders = stops;
+      }
       final manualOrderSymbols = {
         for (final o in _openOrders ?? const <ExchangeOrder>[])
           if (o.opens && !o.fromBot) o.symbol,
@@ -1270,6 +1298,9 @@ class BotEngine {
       '置きました (${position.holdVol} 枚)',
       symbol: position.symbol,
     ));
+    // 画面の線をすぐ新しい位置にする。
+    final stops = await _fetchStopOrders();
+    if (stops != null) _stopOrders = stops;
     _emitSnapshot();
   }
 
@@ -1434,6 +1465,21 @@ class BotEngine {
       if (!_warnedOrderFetch) {
         _warnedOrderFetch = true;
         _log(BotEvent.warning('出ている注文を取れませんでした: $e'));
+      }
+      return null;
+    }
+  }
+
+  /// 建玉に付けた利確 / 損切りを取る。取れなければ null (前の一覧を使う)。
+  Future<List<PositionStopOrder>?> _fetchStopOrders() async {
+    try {
+      final stops = await _rest.fetchStopOrders();
+      _warnedStopOrderFetch = false;
+      return stops;
+    } catch (e) {
+      if (!_warnedStopOrderFetch) {
+        _warnedStopOrderFetch = true;
+        _log(BotEvent.warning('建玉の利確 / 損切りを取れませんでした: $e'));
       }
       return null;
     }

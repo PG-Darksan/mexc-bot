@@ -18,7 +18,8 @@ enum RejectReason {
   cooldown('クールダウン中'),
   profitTooSmall('利確幅が小さ過ぎる'),
   volumeTooSmall('発注数量が最小未満'),
-  insufficientBalance('残高不足');
+  insufficientBalance('残高不足'),
+  alreadyDetected('この足で検知済み');
 
   const RejectReason(this.label);
 

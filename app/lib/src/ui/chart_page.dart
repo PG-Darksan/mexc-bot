@@ -57,9 +57,6 @@ class _ChartPageState extends State<ChartPage> {
   AppState? _state;
   int _seenRequest = 0;
 
-  /// 下のチャートの場所。保有中のチャートの「利確を動かす」で、ここまで送る。
-  final GlobalKey _mainChartKey = GlobalKey();
-
   @override
   void initState() {
     super.initState();
@@ -147,22 +144,6 @@ class _ChartPageState extends State<ChartPage> {
     }
   }
 
-  /// 下のチャートを [symbol] に切り替えて、そこまで送る。
-  void _focusMainChart(String symbol) {
-    if (symbol != _symbol) {
-      setState(() => _symbol = symbol);
-      _loadChart();
-    }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final target = _mainChartKey.currentContext;
-      if (target == null || !target.mounted) return;
-      Scrollable.ensureVisible(
-        target,
-        duration: const Duration(milliseconds: 300),
-      );
-    });
-  }
-
   ManagedPosition? _positionOf(BotSnapshot snapshot) {
     for (final p in snapshot.positions) {
       if (p.symbol == _symbol) return p;
@@ -211,7 +192,12 @@ class _ChartPageState extends State<ChartPage> {
     final held = [
       for (final p in snapshot.positions) HeldView.managed(p),
       for (final p in state.foreignPositions)
-        HeldView.exchange(p, state.contractSizeOf(p.symbol)),
+        HeldView.exchange(
+          p,
+          state.contractSizeOf(p.symbol),
+          exit: state.exitOf(p),
+          exitKnown: snapshot.stopOrders != null,
+        ),
     ];
 
     final symbols = <String>{
@@ -220,8 +206,8 @@ class _ChartPageState extends State<ChartPage> {
       _symbol,
     }.toList();
 
-    // 全部を一度に組み立てる (ListView だと、画面外の下のチャートが
-    // 作られておらず「利確を動かす」で送れないため)。
+    // 全部を一度に組み立てる (ListView だと、画面外に出たチャートが作り
+    // 直され、動かしかけた利確 / 損切りの線が消えるため)。
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
       child: Column(
@@ -241,19 +227,8 @@ class _ChartPageState extends State<ChartPage> {
                 source: _source,
                 config: config,
                 markPrice: state.lastPriceOf(view.symbol),
-                onEditExit: view.managed
-                    ? () => _focusMainChart(view.symbol)
-                    : null,
               ),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: () => TradePage.open(context, view.symbol),
-                  icon: const Icon(Icons.candlestick_chart, size: 16),
-                  label: const Text('取引画面で開く (注文・利確 / 損切り)'),
-                ),
-              ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 8),
             ],
           ],
           const SizedBox(height: 20),
@@ -274,7 +249,7 @@ class _ChartPageState extends State<ChartPage> {
           const PerformanceSection(),
           // 銘柄を選んで見るチャートは、いちばん下に置く。
           const SizedBox(height: 8),
-          _Heading('チャート', key: _mainChartKey),
+          _Heading('チャート'),
           const SizedBox(height: 8),
           _SymbolSearch(
             symbols: _allSymbols,
@@ -453,7 +428,7 @@ class _SymbolSearch extends StatelessWidget {
 }
 
 class _Heading extends StatelessWidget {
-  const _Heading(this.text, {super.key});
+  const _Heading(this.text);
 
   final String text;
 

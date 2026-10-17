@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:mexc_core/mexc_core.dart';
 
@@ -13,6 +14,7 @@ class PriceLine {
     required this.color,
     this.dashed = false,
     this.emphasized = false,
+    this.dragKey,
   });
 
   final double price;
@@ -22,6 +24,10 @@ class PriceLine {
 
   /// いま動かしている線。太く描く。
   final bool emphasized;
+
+  /// つかんで上下に動かせる線の名前 ([PriceChart.onLineDragged] に返す)。
+  /// null なら動かせない。
+  final Object? dragKey;
 }
 
 /// 足して描くバンド / EMA の色。σ や期間ごとに決めておき、どのチャートでも同じ色にする。
@@ -63,6 +69,8 @@ class PriceChart extends StatelessWidget {
     this.visibleBars = defaultVisibleBars,
     this.lines = const [],
     this.onDragPrice,
+    this.onLineDragged,
+    this.onLineDragEnd,
     this.height = 280,
   });
 
@@ -87,6 +95,14 @@ class PriceChart extends StatelessWidget {
 
   /// 上下になぞったときに、その位置の値段を返す。null なら動かせない。
   final ValueChanged<double>? onDragPrice;
+
+  /// [PriceLine.dragKey] の付いた線をつかんで動かしたとき、その線と新しい
+  /// 値段を返す。線の近くから始めたなぞりだけを拾うので、それ以外の所では
+  /// 画面のスクロールがそのまま効く。
+  final void Function(Object key, double price)? onLineDragged;
+
+  /// 線から指を離したとき。
+  final void Function(Object key)? onLineDragEnd;
 
   final double height;
 
@@ -209,19 +225,36 @@ class PriceChart extends StatelessWidget {
       ),
     );
 
-    final chart = onDragPrice == null
-        ? SizedBox(height: height, child: painter)
-        : SizedBox(
-            height: height,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onVerticalDragUpdate: (details) =>
-                  onDragPrice!(priceAt(details.localPosition.dy)),
-              onTapDown: (details) =>
-                  onDragPrice!(priceAt(details.localPosition.dy)),
-              child: painter,
-            ),
-          );
+    final Widget chart;
+    if (onLineDragged != null) {
+      chart = SizedBox(
+        height: height,
+        child: _LineDragLayer(
+          lines: lines,
+          yOf: (price) =>
+              _topPadding +
+              (maxPrice - price) / (maxPrice - minPrice) * plotHeight,
+          pricePerPixel: (maxPrice - minPrice) / plotHeight,
+          onDragged: onLineDragged!,
+          onDragEnd: onLineDragEnd,
+          child: painter,
+        ),
+      );
+    } else {
+      chart = onDragPrice == null
+          ? SizedBox(height: height, child: painter)
+          : SizedBox(
+              height: height,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onVerticalDragUpdate: (details) =>
+                    onDragPrice!(priceAt(details.localPosition.dy)),
+                onTapDown: (details) =>
+                    onDragPrice!(priceAt(details.localPosition.dy)),
+                child: painter,
+              ),
+            );
+    }
 
     // どの線が何かを、チャートのすぐ下に小さく出す。
     final legend = <(String, Color)>[
@@ -506,6 +539,21 @@ class _PriceChartPainter extends CustomPainter {
       } else {
         canvas.drawLine(Offset(0, yy), Offset(plotWidth, yy), paint);
       }
+      // つかめる線には、右端につまみを付ける。
+      if (line.dragKey != null) {
+        final grip = Offset(plotWidth - 12, yy);
+        canvas.drawCircle(grip, 7, Paint()..color = line.color);
+        final mark = Paint()
+          ..color = Colors.white
+          ..strokeWidth = 1.4;
+        for (final dy in const [-2.5, 0.0, 2.5]) {
+          canvas.drawLine(
+            grip + Offset(-3.5, dy),
+            grip + Offset(3.5, dy),
+            mark,
+          );
+        }
+      }
       _text(
         canvas,
         line.label,
@@ -575,4 +623,117 @@ class _PriceChartPainter extends CustomPainter {
       old.extraEmas != extraEmas ||
       old.minPrice != minPrice ||
       old.maxPrice != maxPrice;
+}
+
+/// [PriceLine.dragKey] の付いた線を、つかんで上下に動かす。
+///
+/// なぞり始めた所の近くに動かせる線があるときだけ反応する (それ以外は
+/// 画面のスクロールに回す)。動かしている間は値幅が変わっても指の動きと
+/// 線が揃うよう、つかんだときの縮尺のまま値段に直す。
+class _LineDragLayer extends StatefulWidget {
+  const _LineDragLayer({
+    required this.lines,
+    required this.yOf,
+    required this.pricePerPixel,
+    required this.onDragged,
+    required this.onDragEnd,
+    required this.child,
+  });
+
+  final List<PriceLine> lines;
+  final double Function(double price) yOf;
+  final double pricePerPixel;
+  final void Function(Object key, double price) onDragged;
+  final void Function(Object key)? onDragEnd;
+  final Widget child;
+
+  @override
+  State<_LineDragLayer> createState() => _LineDragLayerState();
+}
+
+class _LineDragLayerState extends State<_LineDragLayer> {
+  /// 線からこの距離 (px) までなら、つかんだことにする。
+  static const double _grabDistance = 24;
+
+  ({Object key, double price, double y, double scale})? _grab;
+
+  PriceLine? _lineNear(Offset local) {
+    PriceLine? best;
+    var bestDistance = _grabDistance;
+    for (final line in widget.lines) {
+      if (line.dragKey == null) continue;
+      final distance = (widget.yOf(line.price) - local.dy).abs();
+      if (distance <= bestDistance) {
+        best = line;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }
+
+  bool _allows(PointerEvent event) {
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return false;
+    return _lineNear(box.globalToLocal(event.position)) != null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RawGestureDetector(
+      behavior: HitTestBehavior.opaque,
+      gestures: {
+        _LineGrabRecognizer:
+            GestureRecognizerFactoryWithHandlers<_LineGrabRecognizer>(
+              () => _LineGrabRecognizer(debugOwner: this),
+              (recognizer) => recognizer
+                ..allows = _allows
+                ..dragStartBehavior = DragStartBehavior.down
+                ..onStart = (details) {
+                  final line = _lineNear(details.localPosition);
+                  if (line == null) return;
+                  _grab = (
+                    key: line.dragKey!,
+                    price: line.price,
+                    y: details.localPosition.dy,
+                    scale: widget.pricePerPixel,
+                  );
+                }
+                ..onUpdate = (details) {
+                  final grab = _grab;
+                  if (grab == null) return;
+                  final price =
+                      grab.price +
+                      (grab.y - details.localPosition.dy) * grab.scale;
+                  if (price > 0) widget.onDragged(grab.key, price);
+                }
+                ..onEnd = (_) {
+                  _release();
+                }
+                ..onCancel = _release,
+            ),
+      },
+      child: widget.child,
+    );
+  }
+
+  void _release() {
+    final grab = _grab;
+    _grab = null;
+    if (grab != null) widget.onDragEnd?.call(grab.key);
+  }
+}
+
+/// 動かせる線の近くで始まったなぞりだけを受け取る。
+class _LineGrabRecognizer extends VerticalDragGestureRecognizer {
+  _LineGrabRecognizer({super.debugOwner});
+
+  bool Function(PointerEvent event)? allows;
+
+  @override
+  bool isPointerAllowed(PointerEvent event) {
+    if (event is PointerDownEvent && !(allows?.call(event) ?? false)) {
+      return false;
+    }
+    return super.isPointerAllowed(event);
+  }
 }

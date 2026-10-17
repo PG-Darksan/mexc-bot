@@ -652,6 +652,13 @@ class _TradePageState extends State<TradePage> {
           dashed: true,
         ));
       }
+      final exit = state.exitOf(p);
+      if (exit.takeProfit != null) {
+        lines.add(PriceLine(price: exit.takeProfit!, label: '利確 (手)', color: Colors.green));
+      }
+      if (exit.stopLoss != null) {
+        lines.add(PriceLine(price: exit.stopLoss!, label: '損切り (手)', color: Colors.red));
+      }
     }
     for (final o in state.openOrdersOf(_symbol)) {
       final price = o.linePrice;
@@ -1346,14 +1353,17 @@ class _TradePageState extends State<TradePage> {
             lines: [
               '建値 ${formatPrice(p.holdAvgPrice)} / ${p.leverage} 倍'
                   '${p.liquidatePrice > 0 ? ' / 清算 ${formatPrice(p.liquidatePrice)}' : ''}',
+              if (state.snapshot.stopOrders != null)
+                '利確 ${formatPrice(state.exitOf(p).takeProfit)}'
+                    ' / 損切り ${state.exitOf(p).stopLoss == null ? 'なし' : formatPrice(state.exitOf(p).stopLoss)}',
               if (mark != null)
                 '評価損益 ${formatPnl(p.unrealizedPnl(mark, state.contractSizeOf(p.symbol)))}',
             ],
             busy: _submitting,
             onEdit: () => _editExit(
               title: '${p.isShort ? 'ショート' : 'ロング'} ${p.holdVol} 枚',
-              takeProfit: null,
-              stopLoss: null,
+              takeProfit: state.exitOf(p).takeProfit,
+              stopLoss: state.exitOf(p).stopLoss,
               apply: (tp, sl) => state.updateExchangePositionExit(
                 positionId: p.positionId,
                 takeProfitPrice: tp,

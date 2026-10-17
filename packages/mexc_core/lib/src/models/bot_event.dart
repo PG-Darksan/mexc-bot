@@ -99,6 +99,7 @@ class BotSnapshot {
     this.pushTopic,
     this.openOrders,
     this.pendingExits = const [],
+    this.stopOrders,
   });
 
   final bool running;
@@ -146,6 +147,10 @@ class BotSnapshot {
   /// サーバーが置く。
   final List<PendingExit> pendingExits;
 
+  /// 建玉に付けた利確 / 損切り (まだ発動していないもの)。手で建てた建玉の
+  /// 線を引くのに使う。まだ取っていなければ (古いサーバーなど) null。
+  final List<PositionStopOrder>? stopOrders;
+
   static BotSnapshot initial(StrategyConfig config) => BotSnapshot(
     running: false,
     config: config,
@@ -179,6 +184,7 @@ class BotSnapshot {
     'pushTopic': pushTopic,
     'openOrders': openOrders?.map((e) => e.toJson()).toList(),
     'pendingExits': pendingExits.map((e) => e.toJson()).toList(),
+    'stopOrders': stopOrders?.map((e) => e.toJson()).toList(),
   };
 
   factory BotSnapshot.fromJson(Map<String, dynamic> json) => BotSnapshot(
@@ -234,6 +240,12 @@ class BotSnapshot {
         .whereType<Map>()
         .map((e) => PendingExit.fromJson(e.cast<String, dynamic>()))
         .toList(),
+    stopOrders: json['stopOrders'] is List
+        ? (json['stopOrders'] as List)
+              .whereType<Map>()
+              .map((e) => PositionStopOrder.fromJson(e.cast<String, dynamic>()))
+              .toList()
+        : null,
   );
 
   static List<PositionInfo>? _positionList(Object? raw) => raw is List

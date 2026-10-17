@@ -11,8 +11,10 @@ import 'package:mexc_bot_app/src/data/chart_drawing.dart';
 import 'package:mexc_bot_app/src/settings/app_settings.dart';
 import 'package:mexc_bot_app/src/settings/settings_store.dart';
 import 'package:mexc_bot_app/src/state/app_state.dart';
+import 'package:mexc_bot_app/src/ui/held_chart.dart';
 import 'package:mexc_bot_app/src/ui/interactive_chart.dart';
 import 'package:mexc_bot_app/src/ui/lock_screen.dart';
+import 'package:mexc_bot_app/src/ui/price_chart.dart';
 import 'package:mexc_bot_app/src/ui/trade_page.dart';
 import 'package:mexc_core/mexc_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -381,6 +383,127 @@ void main() {
       const settings = AppSettings(chartBars: 60);
       expect(AppSettings.fromJson(settings.toJson()).chartBars, 60);
       expect(AppSettings.fromJson(const {}).chartBars, AppSettings.defaultChartBars);
+    });
+  });
+
+  group('ホームの保有中の建玉', () {
+    const foreign = PositionInfo(
+      positionId: 42,
+      symbol: 'BTC_USDT',
+      positionType: 1,
+      openType: 1,
+      state: 1,
+      holdVol: 10,
+      frozenVol: 0,
+      closeVol: 0,
+      holdAvgPrice: 95,
+      openAvgPrice: 95,
+      closeAvgPrice: 0,
+      liquidatePrice: 0,
+      im: 1,
+      leverage: 1,
+      realised: 0,
+      profitRatio: 0,
+      createTime: 0,
+      updateTime: 0,
+    );
+
+    Future<void> pumpHeld(WidgetTester tester, HeldView view) async {
+      SharedPreferences.setMockInitialValues({});
+      final state = AppState(SettingsStore());
+      tester.view.physicalSize = const Size(600, 1200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        AppScope(
+          state: state,
+          child: MaterialApp(
+            home: Scaffold(
+              body: ListView(
+                children: [
+                  HeldPositionChart(
+                    position: view,
+                    source: _fakeSource(),
+                    config: const StrategyConfig(),
+                    markPrice: 100,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('手で建てた建玉にも、取引所の利確 / 損切りの線を引く', (tester) async {
+      await pumpHeld(
+        tester,
+        HeldView.exchange(
+          foreign,
+          0.0001,
+          exit: exitOfPosition(foreign, const [
+            PositionStopOrder(
+              id: '1',
+              symbol: 'BTC_USDT',
+              positionId: 42,
+              positionType: 1,
+              takeProfitPrice: 120,
+              stopLossPrice: 80,
+            ),
+          ]),
+        ),
+      );
+      expect(find.textContaining('利確 120.0'), findsOneWidget);
+      expect(find.textContaining('損切り 80.0'), findsOneWidget);
+      expect(find.text('利確を置く'), findsNothing);
+      expect(find.text('決済'), findsOneWidget);
+    });
+
+    testWidgets('線をなぞって動かすと「反映」が出て、「戻す」で元に戻る', (tester) async {
+      await pumpHeld(
+        tester,
+        HeldView.exchange(
+          foreign,
+          0.0001,
+          exit: (takeProfit: 120, stopLoss: null),
+        ),
+      );
+      expect(find.text('反映'), findsNothing);
+      // 120 は値幅のいちばん上なので、チャートの上の端の近くにある。
+      final chart = tester.getTopLeft(find.byType(PriceChart));
+      await tester.dragFrom(chart + const Offset(80, 18), const Offset(0, 40));
+      await tester.pumpAndSettle();
+      expect(find.text('反映'), findsOneWidget);
+      expect(find.textContaining('利確 120.0'), findsNothing);
+
+      await tester.tap(find.text('戻す'));
+      await tester.pumpAndSettle();
+      expect(find.text('反映'), findsNothing);
+      expect(find.textContaining('利確 120.0'), findsOneWidget);
+    });
+
+    testWidgets('「決済」は確かめてから送る', (tester) async {
+      await pumpHeld(
+        tester,
+        HeldView.exchange(foreign, 0.0001, exit: (takeProfit: 120, stopLoss: null)),
+      );
+      await tester.tap(find.text('決済'));
+      await tester.pumpAndSettle();
+      expect(find.text('成行で決済します'), findsOneWidget);
+      await tester.tap(find.text('やめる'));
+      await tester.pumpAndSettle();
+      expect(find.text('成行で決済します'), findsNothing);
+    });
+
+    testWidgets('古いサーバーで位置が分からなければ、動かさせない', (tester) async {
+      await pumpHeld(
+        tester,
+        HeldView.exchange(foreign, 0.0001, exitKnown: false),
+      );
+      expect(find.text('利確を置く'), findsNothing);
+      expect(find.textContaining('サーバーを新しい版にすると'), findsOneWidget);
+      expect(find.text('決済'), findsOneWidget);
     });
   });
 }

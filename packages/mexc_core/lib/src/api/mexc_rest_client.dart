@@ -427,6 +427,28 @@ class MexcRestClient {
         .toList();
   }
 
+  /// 建玉に付けた利確 / 損切りのうち、まだ発動していないもの。
+  Future<List<PositionStopOrder>> fetchStopOrders() async {
+    await _queryLimiter.acquire();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final data = await _privateGet(
+      '/api/v1/private/stoporder/list/orders',
+      query: {
+        // 0 = まだ終わっていないもの。
+        'is_finished': '0',
+        // 期間を省くと直近 7 日分しか返らない。一度に見られるのは 90 日まで。
+        'start_time': '${now - 89 * Duration.millisecondsPerDay}',
+        'end_time': '$now',
+        'page_num': '1',
+        'page_size': '100',
+      },
+    );
+    return [
+      for (final json in _listOf(data))
+        if (PositionStopOrder.fromExchangeJson(json) case final order?) order,
+    ];
+  }
+
   /// 一覧そのものが返る場合と、ページ情報に包まれて返る場合がある。
   static List<Map<String, dynamic>> _listOf(Object? data) {
     final list = switch (data) {
